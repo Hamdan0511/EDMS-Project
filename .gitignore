@@ -22,7 +22,15 @@
 
 # misc
 .DS_Store
+Thumbs.db
 *.pem
+
+# editors
+.vscode/
+.idea/
+
+# local AI-assistant tooling config (not part of the application)
+.claude/
 
 # debug
 npm-debug.log*
@@ -32,6 +40,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -39,3 +48,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local file storage (uploaded documents/attachments)
+/storage/*
+!/storage/.gitkeep
+
+# scratch verification tooling (not part of the app)
+/.scratch/
+
+/src/generated/prisma

@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: shanfari
+      POSTGRES_PASSWORD: shanfari_dev_password
+      POSTGRES_DB: shanfari_edms
+    ports:
+      - "5434:5432"
+    volumes:
+      - shanfari_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shanfari -d shanfari_edms"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  shanfari_pgdata:

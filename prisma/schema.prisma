@@ -1,0 +1,571 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Identity / directory
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users          User[]
+  ownedProjects  Project[]       @relation("ProjectOwnerOrg")
+  projectMembers ProjectMember[]
+
+  @@index([name])
+}
+
+enum UserAccountType {
+  FULL
+  GUEST
+}
+
+model User {
+  id             String          @id @default(cuid())
+  email          String          @unique
+  passwordHash   String
+  name           String
+  jobTitle       String?
+  organizationId String
+  isActive       Boolean         @default(true)
+  /**
+   * GUEST accounts represent an external correspondent added to a project's
+   * Directory for mail purposes only — they are always created with
+   * isActive = false so the existing login check blocks sign-in for them.
+   */
+  accountType    UserAccountType @default(FULL)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  organization             Organization              @relation(fields: [organizationId], references: [id])
+  sessions                 Session[]
+  projectMembers           ProjectMember[]
+  sentMail                 Mail[]                    @relation("MailSender")
+  mailRecipients           MailRecipient[]
+  savedSearches            SavedSearch[]
+  documents                Document[]                @relation("DocumentCreatedBy")
+  documentVersions         DocumentVersion[]         @relation("DocumentVersionUploadedBy")
+  temporaryFiles           TemporaryFile[]           @relation("TemporaryFileUploadedBy")
+  autoTexts                AutoText[]                @relation("AutoTextCreatedBy")
+  signatures               Signature[]
+  mailInlineImages         MailInlineImage[]         @relation("MailInlineImageUploadedBy")
+  auditLogs                AuditLog[]
+  mailTypeAttributeOptions MailTypeAttributeOption[]
+  mailDocumentReferences   MailDocumentReference[]
+  mailRelatedMails         MailRelatedMail[]
+
+  @@index([organizationId])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+
+model Project {
+  id         String   @id @default(cuid())
+  name       String
+  shortName  String
+  code       String?
+  /**
+   * Client/employer name shown on the mail letterhead, e.g. "Ministry of Culture, Sports and Youth".
+   */
+  clientName String?
+  /**
+   * Project location shown on the mail letterhead, e.g. "Sultanate of Oman, Muscat".
+   */
+  location   String?
+  ownerOrgId String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  ownerOrg         Organization?     @relation("ProjectOwnerOrg", fields: [ownerOrgId], references: [id])
+  members          ProjectMember[]
+  mailTypes        MailType[]
+  mails            Mail[]
+  folders          Folder[]
+  documentTypes    DocumentType[]
+  documents        Document[]
+  temporaryFiles   TemporaryFile[]
+  autoTexts        AutoText[]
+  mailInlineImages MailInlineImage[]
+  savedSearches    SavedSearch[]
+  auditLogs        AuditLog[]
+
+  @@index([ownerOrgId])
+}
+
+enum ProjectRole {
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+model ProjectMember {
+  id             String      @id @default(cuid())
+  projectId      String
+  userId         String
+  organizationId String
+  role           ProjectRole @default(MEMBER)
+  createdAt      DateTime    @default(now())
+
+  project      Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Mail
+// ---------------------------------------------------------------------------
+
+model MailType {
+  id                 String  @id @default(cuid())
+  projectId          String
+  name               String
+  attribute1Label    String?
+  attribute2Label    String?
+  requiresAttribute1 Boolean @default(false)
+  requiresAttribute2 Boolean @default(false)
+
+  project          Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  mails            Mail[]
+  attributeOptions MailTypeAttributeOption[]
+
+  @@unique([projectId, name])
+}
+
+/**
+ * A selectable value for a MailType's attribute1/attribute2 slot (slot 1 or
+ * 2), configured on the fly from the Register Incoming Mail "Select
+ * Attributes" modal rather than through a separate admin screen.
+ */
+model MailTypeAttributeOption {
+  id          String   @id @default(cuid())
+  mailTypeId  String
+  slot        Int
+  value       String
+  createdById String
+  createdAt   DateTime @default(now())
+
+  mailType  MailType @relation(fields: [mailTypeId], references: [id], onDelete: Cascade)
+  createdBy User     @relation(fields: [createdById], references: [id])
+
+  @@unique([mailTypeId, slot, value])
+  @@index([mailTypeId, slot])
+}
+
+enum MailStatus {
+  DRAFT
+  SENT
+}
+
+enum MailDirection {
+  OUTGOING
+  INCOMING
+}
+
+enum MailResponseType {
+  RESPOND_BY
+  APPROVE_BY
+  SUBMIT_COMMENTS_BY
+  REVISE_RESUBMIT_BY
+  SUBMIT_QUOTATION_BY
+  FABRICATE_AND_DELIVER_BY
+  TENDER_DUE_BY
+  ACKNOWLEDGE_BY
+  ACTION_BY
+}
+
+// Business/workflow status shown in the mail register (distinct from
+// MailStatus above, which tracks the internal draft-vs-sent lifecycle).
+enum MailWorkflowStatus {
+  NA
+  OUTSTANDING
+  OVERDUE
+  RESPONDED
+  NO_ACTION_REQUIRED
+  CLOSED_OUT
+}
+
+model Mail {
+  id               String             @id @default(cuid())
+  projectId        String
+  mailNumber       String
+  referenceNumber  String?
+  typeId           String
+  subject          String
+  /**
+   * Sanitized rich-text HTML — canonical, rendered representation of the message body.
+   */
+  messageHtml      String             @default("")
+  /**
+   * Plain-text derivative of messageHtml, kept in sync on every save — used for search, accessibility, and fallback rendering.
+   */
+  messageText      String             @default("")
+  attribute1       String?
+  attribute2       String?
+  responseRequired Boolean            @default(false)
+  responseDueDate  DateTime?
+  responseType     MailResponseType?
+  status           MailStatus         @default(DRAFT)
+  workflowStatus   MailWorkflowStatus @default(NA)
+  /**
+   * Whether this record was created by our organization sending correspondence
+   * out (OUTGOING, the default — New Mail) or by registering correspondence
+   * that was actually received from an external/project party (INCOMING —
+   * Register Incoming Mail). senderId always reflects the true author of the
+   * message in both cases; this field only distinguishes who initiated the
+   * record in our system.
+   */
+  direction        MailDirection      @default(OUTGOING)
+  senderId         String
+  parentMailId     String?
+  threadRootId     String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  sentAt           DateTime?
+
+  project            Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type               MailType                @relation(fields: [typeId], references: [id])
+  sender             User                    @relation("MailSender", fields: [senderId], references: [id])
+  parentMail         Mail?                   @relation("MailReplies", fields: [parentMailId], references: [id])
+  replies            Mail[]                  @relation("MailReplies")
+  recipients         MailRecipient[]
+  attachments        MailAttachment[]
+  documentReferences MailDocumentReference[]
+  relatedMails       MailRelatedMail[]       @relation("MailRelatedMailFromMail")
+  relatedByMails     MailRelatedMail[]       @relation("MailRelatedMailToMail")
+
+  @@unique([projectId, mailNumber])
+  @@index([projectId, status])
+  @@index([projectId, workflowStatus])
+  @@index([threadRootId])
+  @@index([senderId])
+  @@index([typeId])
+}
+
+/**
+ * A real reference from an incoming (or any) mail to an existing, official
+ * Document Register document — created via Attach > Document. Does not
+ * duplicate or modify the Document/DocumentVersion it points to.
+ */
+model MailDocumentReference {
+  id          String   @id @default(cuid())
+  mailId      String
+  documentId  String
+  createdById String
+  createdAt   DateTime @default(now())
+
+  mail      Mail     @relation(fields: [mailId], references: [id], onDelete: Cascade)
+  document  Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  createdBy User     @relation(fields: [createdById], references: [id])
+
+  @@unique([mailId, documentId])
+  @@index([documentId])
+}
+
+/**
+ * A real reference from one mail to another existing mail — created via
+ * Attach > Project Mail. Deliberately distinct from parentMailId/threadRootId,
+ * which are reserved for Reply/Reply All/Forward threading only.
+ */
+model MailRelatedMail {
+  id            String   @id @default(cuid())
+  mailId        String
+  relatedMailId String
+  createdById   String
+  createdAt     DateTime @default(now())
+
+  mail        Mail @relation("MailRelatedMailFromMail", fields: [mailId], references: [id], onDelete: Cascade)
+  relatedMail Mail @relation("MailRelatedMailToMail", fields: [relatedMailId], references: [id], onDelete: Cascade)
+  createdBy   User @relation(fields: [createdById], references: [id])
+
+  @@unique([mailId, relatedMailId])
+  @@index([relatedMailId])
+}
+
+enum RecipientType {
+  TO
+  CC
+}
+
+model MailRecipient {
+  id     String        @id @default(cuid())
+  mailId String
+  userId String
+  type   RecipientType
+  readAt DateTime?
+
+  mail Mail @relation(fields: [mailId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([mailId, userId, type])
+  @@index([userId])
+}
+
+model MailAttachment {
+  id         String   @id @default(cuid())
+  mailId     String
+  fileName   String
+  storedPath String
+  mimeType   String
+  sizeBytes  Int
+  uploadedAt DateTime @default(now())
+
+  mail Mail @relation(fields: [mailId], references: [id], onDelete: Cascade)
+
+  @@index([mailId])
+}
+
+/**
+ * A reusable text/HTML snippet a user can insert into a mail message body
+ * (e.g. standard openings/closings). Project-scoped like MailType.
+ */
+model AutoText {
+  id          String   @id @default(cuid())
+  projectId   String
+  name        String
+  contentHtml String
+  description String?
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User    @relation("AutoTextCreatedBy", fields: [createdById], references: [id])
+
+  @@unique([projectId, name])
+  @@index([projectId])
+}
+
+/**
+ * A reusable sign-off block a user can insert into a mail message body.
+ * Personal to the user (not project-scoped) — a user's signature travels
+ * with them across projects.
+ */
+model Signature {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  contentHtml String
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/**
+ * An image embedded inline in a mail message body via the rich-text editor.
+ * Stored on disk like every other upload; referenced from messageHtml by
+ * its serving URL rather than embedded as base64. Uploaded independently of
+ * the mail itself (during composition), so it needs its own project scope
+ * for authorization rather than a mailId foreign key.
+ */
+model MailInlineImage {
+  id           String   @id @default(cuid())
+  projectId    String
+  uploadedById String
+  storedPath   String
+  mimeType     String
+  sizeBytes    Int
+  createdAt    DateTime @default(now())
+
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploadedBy User    @relation("MailInlineImageUploadedBy", fields: [uploadedById], references: [id])
+
+  @@index([projectId])
+}
+
+// ---------------------------------------------------------------------------
+// Documents
+// ---------------------------------------------------------------------------
+
+model Folder {
+  id        String   @id @default(cuid())
+  projectId String
+  name      String
+  parentId  String?
+  createdAt DateTime @default(now())
+
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parent    Folder?    @relation("FolderChildren", fields: [parentId], references: [id])
+  children  Folder[]   @relation("FolderChildren")
+  documents Document[]
+
+  @@index([projectId, parentId])
+}
+
+model DocumentType {
+  id        String @id @default(cuid())
+  projectId String
+  name      String
+
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  documents Document[]
+
+  @@unique([projectId, name])
+}
+
+enum DocumentStatus {
+  DRAFT
+  FOR_REVIEW
+  UNDER_REVIEW
+  APPROVED
+  APPROVED_WITH_COMMENTS
+  REJECTED
+  REVISE_RESUBMIT
+  SUPERSEDED
+  WITHDRAWN
+  CLOSED
+}
+
+model Document {
+  id              String         @id @default(cuid())
+  projectId       String
+  documentNo      String
+  title           String
+  description     String?
+  typeId          String?
+  folderId        String?
+  discipline      String?
+  status          DocumentStatus @default(DRAFT)
+  currentRevision String         @default("0")
+  createdById     String
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  project             Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type                DocumentType?           @relation(fields: [typeId], references: [id])
+  folder              Folder?                 @relation(fields: [folderId], references: [id])
+  createdBy           User                    @relation("DocumentCreatedBy", fields: [createdById], references: [id])
+  versions            DocumentVersion[]
+  temporaryFileOrigin TemporaryFile?
+  mailReferences      MailDocumentReference[]
+
+  @@unique([projectId, documentNo])
+  @@index([projectId, folderId])
+  @@index([projectId, status])
+  @@index([projectId, discipline])
+}
+
+model DocumentVersion {
+  id           String   @id @default(cuid())
+  documentId   String
+  revision     String
+  versionNo    Int
+  fileName     String
+  storedPath   String
+  mimeType     String
+  sizeBytes    Int
+  notes        String?
+  uploadedById String
+  uploadedAt   DateTime @default(now())
+
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  uploadedBy User     @relation("DocumentVersionUploadedBy", fields: [uploadedById], references: [id])
+
+  @@unique([documentId, versionNo])
+  @@index([documentId])
+}
+
+// ---------------------------------------------------------------------------
+// Temporary Files — uploaded project files that are not yet part of the
+// official Document Register. A Temporary File becomes an official Document
+// (with its own DocumentVersion) only when a user explicitly registers it;
+// uploading never creates a Document on its own.
+// ---------------------------------------------------------------------------
+
+enum TemporaryFileStatus {
+  TEMPORARY
+  PROCESSING
+  REGISTERED
+}
+
+model TemporaryFile {
+  id                   String              @id @default(cuid())
+  projectId            String
+  uploadedById         String
+  originalFileName     String
+  storedPath           String
+  mimeType             String
+  sizeBytes            Int
+  uploadedAt           DateTime            @default(now())
+  status               TemporaryFileStatus @default(TEMPORARY)
+  registeredDocumentId String?             @unique
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  project            Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploadedBy         User      @relation("TemporaryFileUploadedBy", fields: [uploadedById], references: [id])
+  registeredDocument Document? @relation(fields: [registeredDocumentId], references: [id])
+
+  @@index([projectId, status])
+  @@index([uploadedById])
+}
+
+// ---------------------------------------------------------------------------
+// Saved searches / audit
+// ---------------------------------------------------------------------------
+
+enum SearchModule {
+  MAIL
+  DOCUMENTS
+}
+
+model SavedSearch {
+  id        String       @id @default(cuid())
+  userId    String
+  projectId String
+  module    SearchModule
+  name      String
+  filters   Json
+  createdAt DateTime     @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId, module, name])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  projectId  String?
+  action     String
+  entityType String
+  entityId   String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  user    User?    @relation(fields: [userId], references: [id])
+  project Project? @relation(fields: [projectId], references: [id])
+
+  @@index([projectId, entityType, entityId])
+  @@index([userId])
+}
