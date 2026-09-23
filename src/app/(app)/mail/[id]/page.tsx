@@ -9,7 +9,6 @@ import { SectionHeader } from "@/components/ui/section-header";
 import { buttonClass } from "@/components/ui/button";
 import { PrintMenu } from "@/components/mail/print-menu";
 import { MailActionsMenu } from "@/components/mail/mail-actions-menu";
-import { MarkClosedOutButton } from "@/components/mail/mark-closed-out-button";
 import { MailThreadPanel } from "@/components/mail/mail-thread-panel";
 import { RecipientDisclosure } from "@/components/mail/recipient-disclosure";
 import { MailRichContent } from "@/components/mail/mail-rich-content";
@@ -82,9 +81,6 @@ export default async function ViewMailPage({
                 }
                 currentStatus={statusLabel}
               />
-            )}
-            {mail.status === "SENT" && membership.role !== "VIEWER" && (
-              <MarkClosedOutButton mailId={mail.id} currentStatus={statusLabel} />
             )}
             <Link href="/mail" className={buttonClass("secondary", "md")}>
               <ChevronLeft size={14} />

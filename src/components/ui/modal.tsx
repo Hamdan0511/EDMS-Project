@@ -1,6 +1,7 @@
 "use client";
 
 import { ReactNode, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { X } from "@/components/ui/icons";
 
 export function Modal({
@@ -27,7 +28,14 @@ export function Modal({
 
   if (!open) return null;
 
-  return (
+  // Rendered via a portal into document.body rather than in place: a modal
+  // is frequently opened from inside a page-level <form> (e.g. Document
+  // Register's filter form), and this component's own content often
+  // includes a <form> of its own (e.g. Advanced Search) — nesting <form>
+  // inside <form> is invalid HTML and triggers a hydration error. A portal
+  // keeps React's component tree (context, event bubbling) intact while
+  // moving the actual DOM node outside any ancestor form.
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4"
       onMouseDown={(e) => {
@@ -53,6 +61,7 @@ export function Modal({
         </div>
         <div className="max-h-[75vh] overflow-y-auto p-4">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/session";
 import { assertProjectMember } from "@/lib/project-context";
-import { requireProjectRole, ForbiddenRoleError } from "@/lib/auth/roles";
+import { requirePermission, ForbiddenPermissionError } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/prisma";
 import { registerTemporaryFileAsDocument, TemporaryFileError } from "@/lib/temporary-files/service";
 
@@ -20,17 +20,16 @@ export async function POST(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  let membership;
   try {
-    membership = await assertProjectMember(user, record.projectId);
+    await assertProjectMember(user, record.projectId);
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   try {
-    requireProjectRole(membership, ["ADMIN", "MEMBER"]);
+    await requirePermission(user.id, "DOCUMENT_CREATE", { projectId: record.projectId });
   } catch (err) {
-    if (err instanceof ForbiddenRoleError) {
+    if (err instanceof ForbiddenPermissionError) {
       return NextResponse.json({ error: "Viewers cannot register documents" }, { status: 403 });
     }
     throw err;
@@ -40,7 +39,8 @@ export async function POST(
   if (!body || typeof body !== "object") {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
-  const { documentNo, title, revision, typeName, description, discipline } = body as Record<string, unknown>;
+  const { documentNo, title, revision, typeName, description, discipline, functionalBreakdown, spatialBreakdown, reviewStatus } =
+    body as Record<string, unknown>;
 
   try {
     const document = await registerTemporaryFileAsDocument({
@@ -53,6 +53,9 @@ export async function POST(
       typeName: typeof typeName === "string" ? typeName : undefined,
       description: typeof description === "string" ? description : undefined,
       discipline: typeof discipline === "string" ? discipline : undefined,
+      functionalBreakdown: typeof functionalBreakdown === "string" ? functionalBreakdown : undefined,
+      spatialBreakdown: typeof spatialBreakdown === "string" ? spatialBreakdown : undefined,
+      reviewStatus: typeof reviewStatus === "string" ? reviewStatus : undefined,
     });
     return NextResponse.json({ id: document.id, documentNo: document.documentNo });
   } catch (err) {

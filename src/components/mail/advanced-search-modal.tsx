@@ -6,6 +6,23 @@ import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Plus, X } from "@/components/ui/icons";
+
+type DateField = "sent" | "due";
+type DateRow = { field: DateField; from: string; to: string };
+
+function parseInitialDateQueries(raw: string | null): DateRow[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((q) => q && typeof q === "object" && (q.field === "sent" || q.field === "due"))
+      .map((q) => ({ field: q.field, from: q.from ?? "", to: q.to ?? "" }));
+  } catch {
+    return [];
+  }
+}
 
 export function AdvancedSearchModal({
   statusOptions,
@@ -18,6 +35,27 @@ export function AdvancedSearchModal({
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  const [dateRows, setDateRows] = useState<DateRow[]>(() => [
+    {
+      field: (searchParams.get("dateField") as DateField) || "sent",
+      from: searchParams.get("dateFrom") ?? "",
+      to: searchParams.get("dateTo") ?? "",
+    },
+    ...parseInitialDateQueries(searchParams.get("dateQueries")),
+  ]);
+
+  function updateDateRow(index: number, patch: Partial<DateRow>) {
+    setDateRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+  }
+
+  function addDateRow() {
+    setDateRows((prev) => [...prev, { field: "sent", from: "", to: "" }]);
+  }
+
+  function removeDateRow(index: number) {
+    setDateRows((prev) => prev.filter((_, i) => i !== index));
+  }
+
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
@@ -29,11 +67,23 @@ export function AdvancedSearchModal({
       if (v) params.set(key, v);
     }
 
+    const [row0, ...extraRows] = dateRows;
+    if (row0 && (row0.from || row0.to)) {
+      params.set("dateField", row0.field);
+      if (row0.from) params.set("dateFrom", row0.from);
+      if (row0.to) params.set("dateTo", row0.to);
+    }
+    const validExtra = extraRows.filter((r) => r.from || r.to);
+    if (validExtra.length > 0) {
+      params.set("dateQueries", JSON.stringify(validExtra));
+    }
+
     router.push(`/mail?${params.toString()}`);
     setOpen(false);
   }
 
   const field = "flex flex-col gap-1 text-xs font-medium text-text-secondary";
+  const dateFieldLabel = (f: DateField) => (f === "due" ? "Response Due Date" : "Date");
 
   return (
     <>
@@ -88,14 +138,47 @@ export function AdvancedSearchModal({
               ))}
             </Select>
           </label>
-          <label className={field}>
-            Date From
-            <Input type="date" name="dateFrom" defaultValue={searchParams.get("dateFrom") ?? ""} />
-          </label>
-          <label className={field}>
-            Date To
-            <Input type="date" name="dateTo" defaultValue={searchParams.get("dateTo") ?? ""} />
-          </label>
+
+          <div className="col-span-2 flex flex-col gap-2 border-t border-border pt-3">
+            {dateRows.map((row, i) => (
+              <div key={i} className="flex items-end gap-2">
+                <label className={`${field} w-40`}>
+                  {i === 0 ? "Date Range" : "Date Query"}
+                  <Select value={row.field} onChange={(e) => updateDateRow(i, { field: e.target.value as DateField })}>
+                    <option value="sent">Date</option>
+                    <option value="due">Response Due Date</option>
+                  </Select>
+                </label>
+                <label className={field}>
+                  From
+                  <Input type="date" value={row.from} onChange={(e) => updateDateRow(i, { from: e.target.value })} />
+                </label>
+                <label className={field}>
+                  To
+                  <Input type="date" value={row.to} onChange={(e) => updateDateRow(i, { to: e.target.value })} />
+                </label>
+                {i > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => removeDateRow(i)}
+                    className="mb-1.5 flex items-center gap-1 text-xs text-danger hover:underline"
+                    aria-label={`Remove ${dateFieldLabel(row.field)} query`}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={addDateRow}
+              className="flex w-fit items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
+            >
+              <Plus size={12} />
+              Add another date query
+            </button>
+          </div>
+
           <label className="flex items-center gap-1.5 text-[13px] text-text-primary">
             <input
               type="checkbox"

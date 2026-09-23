@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/session";
 import { assertProjectMember } from "@/lib/project-context";
-import { requireProjectRole, ForbiddenRoleError } from "@/lib/auth/roles";
+import { requirePermission, ForbiddenPermissionError } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/prisma";
 import { updateAutoText, deleteAutoText, AutoTextError } from "@/lib/mail/auto-text-service";
 
@@ -21,9 +21,9 @@ async function resolveMembership(id: string) {
     return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
   }
   try {
-    requireProjectRole(membership, ["ADMIN", "MEMBER"]);
+    await requirePermission(user.id, "MAIL_MANAGE_SETTINGS", { projectId: item.projectId });
   } catch (err) {
-    if (err instanceof ForbiddenRoleError) {
+    if (err instanceof ForbiddenPermissionError) {
       return { error: NextResponse.json({ error: "Viewers cannot manage Auto Text" }, { status: 403 }) };
     }
     throw err;

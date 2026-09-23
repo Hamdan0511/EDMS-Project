@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/session";
 import { assertProjectMember } from "@/lib/project-context";
-import { requireProjectRole, ForbiddenRoleError } from "@/lib/auth/roles";
+import { requirePermission, ForbiddenPermissionError } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/prisma";
 import { deleteTemporaryFile, TemporaryFileError } from "@/lib/temporary-files/service";
 
@@ -20,17 +20,16 @@ export async function DELETE(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  let membership;
   try {
-    membership = await assertProjectMember(user, record.projectId);
+    await assertProjectMember(user, record.projectId);
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   try {
-    requireProjectRole(membership, ["ADMIN", "MEMBER"]);
+    await requirePermission(user.id, "DOCUMENT_DELETE", { projectId: record.projectId });
   } catch (err) {
-    if (err instanceof ForbiddenRoleError) {
+    if (err instanceof ForbiddenPermissionError) {
       return NextResponse.json({ error: "Viewers cannot delete temporary files" }, { status: 403 });
     }
     throw err;

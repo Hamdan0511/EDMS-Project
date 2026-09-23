@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/session";
 import { assertProjectMember } from "@/lib/project-context";
-import { requireProjectRole, ForbiddenRoleError } from "@/lib/auth/roles";
+import { requirePermission, ForbiddenPermissionError } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/prisma";
 
 function parseSlot(value: string | null): 1 | 2 | null {
@@ -57,17 +57,16 @@ export async function POST(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  let membership;
   try {
-    membership = await assertProjectMember(user, mailType.projectId);
+    await assertProjectMember(user, mailType.projectId);
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   try {
-    requireProjectRole(membership, ["ADMIN", "MEMBER"]);
+    await requirePermission(user.id, "MAIL_MANAGE_SETTINGS", { projectId: mailType.projectId });
   } catch (err) {
-    if (err instanceof ForbiddenRoleError) {
+    if (err instanceof ForbiddenPermissionError) {
       return NextResponse.json({ error: "Viewers cannot add attribute values" }, { status: 403 });
     }
     throw err;

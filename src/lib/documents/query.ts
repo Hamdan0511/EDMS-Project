@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { Prisma } from "@prisma/client";
-import { isDocumentStatus } from "./status";
+import { isDocumentStatus, isDocumentReviewStatus, NO_DOCUMENT_TYPE_VALUE } from "./status";
 
 export const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 export const DEFAULT_PAGE_SIZE = 25;
@@ -14,6 +14,9 @@ export type DocumentSearchParams = {
   typeId?: string;
   status?: string;
   discipline?: string;
+  functionalBreakdown?: string;
+  spatialBreakdown?: string;
+  reviewStatus?: string;
   uploadedBy?: string;
   organizationId?: string;
   dateUploadedFrom?: string;
@@ -33,6 +36,9 @@ export const SORT_KEYS = [
   "type",
   "status",
   "discipline",
+  "functionalBreakdown",
+  "spatialBreakdown",
+  "reviewStatus",
   "uploadedBy",
   "organization",
   "dateUploaded",
@@ -73,15 +79,32 @@ export function parseSort(params: DocumentSearchParams): {
               ? { status: dir }
               : sort === "discipline"
                 ? { discipline: dir }
-                : sort === "uploadedBy"
-                  ? { createdBy: { name: dir } }
-                  : sort === "organization"
-                    ? { createdBy: { organization: { name: dir } } }
-                    : sort === "dateModified"
-                      ? { updatedAt: dir }
-                      : { createdAt: dir };
+                : sort === "functionalBreakdown"
+                  ? { functionalBreakdown: dir }
+                  : sort === "spatialBreakdown"
+                    ? { spatialBreakdown: dir }
+                    : sort === "reviewStatus"
+                      ? { reviewStatus: dir }
+                      : sort === "uploadedBy"
+                        ? { createdBy: { name: dir } }
+                        : sort === "organization"
+                          ? { createdBy: { organization: { name: dir } } }
+                          : sort === "dateModified"
+                            ? { updatedAt: dir }
+                            : { createdAt: dir };
 
   return { orderBy, sort, dir };
+}
+
+/** Filter params that accept either a single value or a comma-joined list
+ * of values (the primary Drawings filter row uses real multi-selects) — one
+ * parser for both cases, since `in: [x]` behaves identically to `equals: x`. */
+function parseMultiValues(raw: string | undefined): string[] {
+  if (!raw?.trim()) return [];
+  return raw
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
 }
 
 function dayRange(dateStr: string): { gte: Date; lt: Date } {
@@ -127,21 +150,44 @@ export function buildWhere(projectId: string, params: DocumentSearchParams): Pri
   if (params.revision?.trim()) {
     filters.push({ currentRevision: { contains: params.revision.trim(), mode: "insensitive" } });
   }
-  if (params.typeId?.trim()) {
-    filters.push({ typeId: params.typeId.trim() });
+  const typeIds = parseMultiValues(params.typeId);
+  if (typeIds.length > 0) {
+    const hasNoType = typeIds.includes(NO_DOCUMENT_TYPE_VALUE);
+    const realIds = typeIds.filter((v) => v !== NO_DOCUMENT_TYPE_VALUE);
+    if (hasNoType && realIds.length > 0) {
+      filters.push({ OR: [{ typeId: { in: realIds } }, { typeId: null }] });
+    } else if (hasNoType) {
+      filters.push({ typeId: null });
+    } else {
+      filters.push({ typeId: { in: realIds } });
+    }
   }
-  const statusValue = params.status?.trim();
-  if (statusValue && isDocumentStatus(statusValue)) {
-    filters.push({ status: statusValue });
+  const statusValues = parseMultiValues(params.status).filter(isDocumentStatus);
+  if (statusValues.length > 0) {
+    filters.push({ status: { in: statusValues } });
   }
-  if (params.discipline?.trim()) {
-    filters.push({ discipline: params.discipline.trim() });
+  const disciplineValues = parseMultiValues(params.discipline);
+  if (disciplineValues.length > 0) {
+    filters.push({ discipline: { in: disciplineValues } });
+  }
+  const functionalBreakdownValues = parseMultiValues(params.functionalBreakdown);
+  if (functionalBreakdownValues.length > 0) {
+    filters.push({ functionalBreakdown: { in: functionalBreakdownValues } });
+  }
+  const spatialBreakdownValues = parseMultiValues(params.spatialBreakdown);
+  if (spatialBreakdownValues.length > 0) {
+    filters.push({ spatialBreakdown: { in: spatialBreakdownValues } });
+  }
+  const reviewStatusValues = parseMultiValues(params.reviewStatus).filter(isDocumentReviewStatus);
+  if (reviewStatusValues.length > 0) {
+    filters.push({ reviewStatus: { in: reviewStatusValues } });
   }
   if (params.uploadedBy?.trim()) {
     filters.push({ createdBy: { name: { contains: params.uploadedBy.trim(), mode: "insensitive" } } });
   }
-  if (params.organizationId?.trim()) {
-    filters.push({ createdBy: { organizationId: params.organizationId.trim() } });
+  const organizationIds = parseMultiValues(params.organizationId);
+  if (organizationIds.length > 0) {
+    filters.push({ createdBy: { organizationId: { in: organizationIds } } });
   }
 
   const uploadedRange = dateRangeFilter(params.dateUploadedFrom, params.dateUploadedTo);

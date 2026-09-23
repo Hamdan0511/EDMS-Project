@@ -24,6 +24,9 @@ export type MailRow = {
   typeLabel: string;
   typeId: string;
   hasAttachments: boolean;
+  repliesCount: number;
+  replyDate: string;
+  due: string;
 };
 
 export type FilterValues = {
@@ -95,7 +98,7 @@ export function MailTable({
   const isVisible = (key: ColumnKey) => !mounted || visible[key];
 
   // Only SENT mail that isn't already Closed-Out can be closed out — matches
-  // the same eligibility the single-mail MarkClosedOutButton enforces.
+  // the same eligibility the single-mail Actions menu enforces.
   const closableSelectedIds = rows
     .filter((r) => selected.has(r.id) && r.statusLabel !== "Draft" && r.statusLabel !== "Closed-Out")
     .map((r) => r.id);
@@ -160,6 +163,9 @@ export function MailTable({
             {isVisible("recipients") && <Th>Recipients</Th>}
             {isVisible("status") && <Th>Status</Th>}
             {isVisible("type") && <Th>Type</Th>}
+            {isVisible("replies") && <Th>Replies</Th>}
+            {isVisible("replyDate") && <Th>Reply Date</Th>}
+            {isVisible("due") && <Th>Due</Th>}
           </Tr>
           <Tr>
             <Th />
@@ -240,6 +246,9 @@ export function MailTable({
             ) : (
               <input type="hidden" name="type" defaultValue={filters.type} />
             )}
+            {isVisible("replies") && <Th />}
+            {isVisible("replyDate") && <Th />}
+            {isVisible("due") && <Th />}
           </Tr>
         </Thead>
         <Tbody>
@@ -280,6 +289,9 @@ export function MailTable({
               {isVisible("recipients") && <Td className="text-text-secondary">{m.recipientsText}</Td>}
               {isVisible("status") && <Td className="text-text-secondary">{m.statusLabel}</Td>}
               {isVisible("type") && <Td className="text-text-secondary">{m.typeLabel}</Td>}
+              {isVisible("replies") && <Td className="text-text-secondary">{m.repliesCount || "—"}</Td>}
+              {isVisible("replyDate") && <Td className="text-text-secondary">{m.replyDate}</Td>}
+              {isVisible("due") && <Td className="text-text-secondary">{m.due}</Td>}
             </Tr>
           ))}
         </Tbody>

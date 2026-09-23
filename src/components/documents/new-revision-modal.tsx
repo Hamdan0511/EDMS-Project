@@ -159,16 +159,18 @@ export function NewRevisionModal({
 export function NewRevisionButton({
   documentId,
   suggestedRevision,
+  label = "Create New Revision",
 }: {
   documentId: string;
   suggestedRevision: string;
+  label?: string;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <Button type="button" variant="secondary" onClick={() => setOpen(true)}>
         <GitBranch size={14} />
-        Create New Revision
+        {label}
       </Button>
       <NewRevisionModal documentId={documentId} suggestedRevision={suggestedRevision} open={open} onClose={() => setOpen(false)} />
     </>

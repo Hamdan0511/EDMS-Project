@@ -7,13 +7,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { AlertCircle, Pencil } from "@/components/ui/icons";
-import { DOCUMENT_STATUS_OPTIONS, DISCIPLINE_OPTIONS } from "@/lib/documents/status";
-import type { DocumentStatus } from "@prisma/client";
+import { DOCUMENT_STATUS_OPTIONS, DOCUMENT_REVIEW_STATUS_OPTIONS } from "@/lib/documents/status";
+import type { DocumentStatus, DocumentReviewStatus } from "@prisma/client";
 
 export type DocumentMetadataInitial = {
   title: string;
   typeName: string;
   discipline: string;
+  functionalBreakdown: string;
+  spatialBreakdown: string;
+  reviewStatus: DocumentReviewStatus | "";
   status: DocumentStatus;
   description: string;
 };
@@ -24,12 +27,18 @@ export function EditMetadataModal({
   documentId,
   initial,
   documentTypeNames,
+  disciplineOptions,
+  functionalBreakdownOptions,
+  spatialBreakdownOptions,
   open,
   onClose,
 }: {
   documentId: string;
   initial: DocumentMetadataInitial;
   documentTypeNames: string[];
+  disciplineOptions: string[];
+  functionalBreakdownOptions: string[];
+  spatialBreakdownOptions: string[];
   open: boolean;
   onClose: () => void;
 }) {
@@ -40,6 +49,9 @@ export function EditMetadataModal({
   const [title, setTitle] = useState(initial.title);
   const [typeName, setTypeName] = useState(initial.typeName);
   const [discipline, setDiscipline] = useState(initial.discipline);
+  const [functionalBreakdown, setFunctionalBreakdown] = useState(initial.functionalBreakdown);
+  const [spatialBreakdown, setSpatialBreakdown] = useState(initial.spatialBreakdown);
+  const [reviewStatus, setReviewStatus] = useState<DocumentReviewStatus | "">(initial.reviewStatus);
   const [status, setStatus] = useState<DocumentStatus>(initial.status);
   const [description, setDescription] = useState(initial.description);
 
@@ -54,7 +66,16 @@ export function EditMetadataModal({
       const res = await fetch(`/api/documents/${documentId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, typeName, discipline, status, description }),
+        body: JSON.stringify({
+          title,
+          typeName,
+          discipline,
+          functionalBreakdown,
+          spatialBreakdown,
+          reviewStatus,
+          status,
+          description,
+        }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -100,23 +121,65 @@ export function EditMetadataModal({
             Discipline
             <Input value={discipline} onChange={(e) => setDiscipline(e.target.value)} list="edit-discipline-options" />
             <datalist id="edit-discipline-options">
-              {DISCIPLINE_OPTIONS.map((name) => (
+              {disciplineOptions.map((name) => (
                 <option key={name} value={name} />
               ))}
             </datalist>
           </label>
         </div>
 
-        <label className="flex flex-col gap-1 text-xs font-medium text-text-secondary">
-          Status
-          <Select value={status} onChange={(e) => setStatus(e.target.value as DocumentStatus)}>
-            {DOCUMENT_STATUS_OPTIONS.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
-              </option>
-            ))}
-          </Select>
-        </label>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="flex flex-col gap-1 text-xs font-medium text-text-secondary">
+            Functional Breakdown
+            <Input
+              value={functionalBreakdown}
+              onChange={(e) => setFunctionalBreakdown(e.target.value)}
+              list="edit-functional-breakdown-options"
+            />
+            <datalist id="edit-functional-breakdown-options">
+              {functionalBreakdownOptions.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-medium text-text-secondary">
+            Spatial Breakdown
+            <Input
+              value={spatialBreakdown}
+              onChange={(e) => setSpatialBreakdown(e.target.value)}
+              list="edit-spatial-breakdown-options"
+            />
+            <datalist id="edit-spatial-breakdown-options">
+              {spatialBreakdownOptions.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="flex flex-col gap-1 text-xs font-medium text-text-secondary">
+            Status
+            <Select value={status} onChange={(e) => setStatus(e.target.value as DocumentStatus)}>
+              {DOCUMENT_STATUS_OPTIONS.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-medium text-text-secondary">
+            Review Status
+            <Select value={reviewStatus} onChange={(e) => setReviewStatus(e.target.value as DocumentReviewStatus | "")}>
+              <option value="">None</option>
+              {DOCUMENT_REVIEW_STATUS_OPTIONS.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </Select>
+          </label>
+        </div>
 
         <label className="flex flex-col gap-1 text-xs font-medium text-text-secondary">
           Description
@@ -146,10 +209,16 @@ export function EditMetadataButton({
   documentId,
   initial,
   documentTypeNames,
+  disciplineOptions,
+  functionalBreakdownOptions,
+  spatialBreakdownOptions,
 }: {
   documentId: string;
   initial: DocumentMetadataInitial;
   documentTypeNames: string[];
+  disciplineOptions: string[];
+  functionalBreakdownOptions: string[];
+  spatialBreakdownOptions: string[];
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -158,7 +227,16 @@ export function EditMetadataButton({
         <Pencil size={14} />
         Edit Metadata
       </Button>
-      <EditMetadataModal documentId={documentId} initial={initial} documentTypeNames={documentTypeNames} open={open} onClose={() => setOpen(false)} />
+      <EditMetadataModal
+        documentId={documentId}
+        initial={initial}
+        documentTypeNames={documentTypeNames}
+        disciplineOptions={disciplineOptions}
+        functionalBreakdownOptions={functionalBreakdownOptions}
+        spatialBreakdownOptions={spatialBreakdownOptions}
+        open={open}
+        onClose={() => setOpen(false)}
+      />
     </>
   );
 }

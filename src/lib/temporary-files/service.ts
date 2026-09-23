@@ -5,6 +5,9 @@ import { prisma } from "@/lib/prisma";
 import { saveUploadedFile, deleteStoredFile } from "@/lib/storage";
 import { logAudit } from "@/lib/audit";
 import { isAllowedExtension, extensionOf, canonicalMimeType, MAX_TEMP_FILE_SIZE_BYTES } from "@/lib/files/file-types";
+import { isDocumentReviewStatus } from "@/lib/documents/status";
+import { deriveRegisterScope } from "@/lib/documents/register-scope";
+import type { DocumentReviewStatus } from "@prisma/client";
 
 export class TemporaryFileError extends Error {}
 
@@ -97,12 +100,31 @@ export async function registerTemporaryFileAsDocument(params: {
   typeName?: string;
   description?: string;
   discipline?: string;
+  functionalBreakdown?: string;
+  spatialBreakdown?: string;
+  reviewStatus?: string;
 }) {
-  const { id, projectId, registeredById, documentNo, title, revision, typeName, description, discipline } = params;
+  const {
+    id,
+    projectId,
+    registeredById,
+    documentNo,
+    title,
+    revision,
+    typeName,
+    description,
+    discipline,
+    functionalBreakdown,
+    spatialBreakdown,
+    reviewStatus,
+  } = params;
 
   if (!documentNo.trim()) throw new TemporaryFileError("Document Number is required.");
   if (!title.trim()) throw new TemporaryFileError("Title is required.");
   if (!revision.trim()) throw new TemporaryFileError("Revision is required.");
+  if (reviewStatus?.trim() && !isDocumentReviewStatus(reviewStatus.trim())) {
+    throw new TemporaryFileError("Invalid review status value.");
+  }
 
   const record = await prisma.temporaryFile.findFirst({ where: { id, projectId } });
   if (!record) {
@@ -122,6 +144,7 @@ export async function registerTemporaryFileAsDocument(params: {
   try {
     const document = await prisma.$transaction(async (tx) => {
       let typeId: string | undefined;
+      let isDrawingType = false;
       if (typeName?.trim()) {
         const type = await tx.documentType.upsert({
           where: { projectId_name: { projectId, name: typeName.trim() } },
@@ -129,6 +152,7 @@ export async function registerTemporaryFileAsDocument(params: {
           create: { projectId, name: typeName.trim() },
         });
         typeId = type.id;
+        isDrawingType = type.isDrawingType;
       }
 
       const doc = await tx.document.create({
@@ -138,6 +162,10 @@ export async function registerTemporaryFileAsDocument(params: {
           title: title.trim(),
           description: description?.trim() || null,
           discipline: discipline?.trim() || null,
+          functionalBreakdown: functionalBreakdown?.trim() || null,
+          spatialBreakdown: spatialBreakdown?.trim() || null,
+          reviewStatus: (reviewStatus?.trim() || null) as DocumentReviewStatus | null,
+          registerScope: deriveRegisterScope(isDrawingType),
           typeId,
           currentRevision: revision.trim(),
           createdById: registeredById,

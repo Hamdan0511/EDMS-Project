@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { getCurrentUser } from "@/lib/auth/session";
 import { assertProjectMember } from "@/lib/project-context";
-import { requireProjectRole, ForbiddenRoleError } from "@/lib/auth/roles";
+import { requirePermission, ForbiddenPermissionError } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/auth/password";
 import { logAudit } from "@/lib/audit";
@@ -39,18 +39,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Organization is required" }, { status: 400 });
   }
 
-  let membership;
   try {
-    membership = await assertProjectMember(user, projectId);
+    await assertProjectMember(user, projectId);
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   try {
-    requireProjectRole(membership, ["ADMIN", "MEMBER"]);
+    await requirePermission(user.id, "DIRECTORY_CREATE_GUEST", { projectId });
   } catch (err) {
-    if (err instanceof ForbiddenRoleError) {
-      return NextResponse.json({ error: "Viewers cannot create guest contacts" }, { status: 403 });
+    if (err instanceof ForbiddenPermissionError) {
+      return NextResponse.json({ error: "You do not have permission to create guest contacts" }, { status: 403 });
     }
     throw err;
   }

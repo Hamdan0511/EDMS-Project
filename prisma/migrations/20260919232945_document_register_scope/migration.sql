@@ -1,0 +1,5 @@
+-- CreateEnum
+CREATE TYPE "DocumentRegisterScope" AS ENUM ('STANDALONE_DOCUMENT', 'DRAWING', 'MAIL_ATTACHMENT_REFERENCE', 'MIGRATION_HOLD', 'ARCHIVED');
+
+-- AlterTable
+ALTER TABLE "Document" ADD COLUMN     "registerScope" "DocumentRegisterScope" NOT NULL DEFAULT 'STANDALONE_DOCUMENT';

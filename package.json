@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "postinstall": "node -e \"require('fs').copyFileSync('node_modules/pdfjs-dist/build/pdf.worker.min.mjs','public/pdf.worker.min.mjs')\""
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
@@ -31,10 +32,12 @@
     "@tiptap/react": "^3.31.3",
     "@tiptap/starter-kit": "^3.31.3",
     "bcryptjs": "^3.0.3",
+    "exceljs": "^4.4.0",
     "jszip": "^3.10.1",
     "lucide-react": "^1.39.0",
     "next": "16.3.4",
     "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.3.289",
     "prisma": "^6.19.3",
     "react": "19.2.8",
     "react-dom": "19.2.8",

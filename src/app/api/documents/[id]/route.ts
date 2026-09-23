@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/session";
 import { assertProjectMember } from "@/lib/project-context";
-import { requireProjectRole, ForbiddenRoleError } from "@/lib/auth/roles";
+import { requirePermission, ForbiddenPermissionError } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/prisma";
 import { deleteDocument, updateDocumentMetadata, DocumentError } from "@/lib/documents/service";
 
-async function resolveMembership(request: NextRequest, id: string) {
+async function resolveMembership(request: NextRequest, id: string, permissionCode: string) {
   const user = await getCurrentUser();
   if (!user) {
     return { error: NextResponse.json({ error: "Not authenticated" }, { status: 401 }) };
@@ -24,9 +24,9 @@ async function resolveMembership(request: NextRequest, id: string) {
   }
 
   try {
-    requireProjectRole(membership, ["ADMIN", "MEMBER"]);
+    await requirePermission(user.id, permissionCode, { projectId: document.projectId });
   } catch (err) {
-    if (err instanceof ForbiddenRoleError) {
+    if (err instanceof ForbiddenPermissionError) {
       return { error: NextResponse.json({ error: "Viewers cannot modify documents" }, { status: 403 }) };
     }
     throw err;
@@ -40,7 +40,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const resolved = await resolveMembership(request, id);
+  const resolved = await resolveMembership(request, id, "DOCUMENT_DELETE");
   if ("error" in resolved) return resolved.error;
   const { user, membership } = resolved;
 
@@ -60,7 +60,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const resolved = await resolveMembership(request, id);
+  const resolved = await resolveMembership(request, id, "DOCUMENT_UPDATE");
   if ("error" in resolved) return resolved.error;
   const { user, membership } = resolved;
 
@@ -68,7 +68,8 @@ export async function PATCH(
   if (!body || typeof body !== "object") {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
-  const { title, typeName, discipline, status, description } = body as Record<string, unknown>;
+  const { title, typeName, discipline, functionalBreakdown, spatialBreakdown, reviewStatus, status, description } =
+    body as Record<string, unknown>;
 
   try {
     const updated = await updateDocumentMetadata({
@@ -78,6 +79,9 @@ export async function PATCH(
       title: typeof title === "string" ? title : undefined,
       typeName: typeof typeName === "string" ? typeName : undefined,
       discipline: typeof discipline === "string" ? discipline : undefined,
+      functionalBreakdown: typeof functionalBreakdown === "string" ? functionalBreakdown : undefined,
+      spatialBreakdown: typeof spatialBreakdown === "string" ? spatialBreakdown : undefined,
+      reviewStatus: typeof reviewStatus === "string" ? reviewStatus : undefined,
       status: typeof status === "string" ? status : undefined,
       description: typeof description === "string" ? description : undefined,
     });

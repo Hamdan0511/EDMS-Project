@@ -20,6 +20,8 @@ model Organization {
   users          User[]
   ownedProjects  Project[]       @relation("ProjectOwnerOrg")
   projectMembers ProjectMember[]
+  roleAssignments UserRoleAssignment[]
+  mailingGroups   MailingGroup[]
 
   @@index([name])
 }
@@ -29,12 +31,30 @@ enum UserAccountType {
   GUEST
 }
 
+/// HIDDEN users are excluded from ordinary Directory search results (still
+/// real rows — never deleted); administrators can still see them. There is
+/// no third "Shadow" state — this app has no concrete rule to distinguish
+/// it from HIDDEN, so it was not invented.
+enum DirectoryVisibility {
+  VISIBLE
+  HIDDEN
+}
+
 model User {
   id             String          @id @default(cuid())
   email          String          @unique
   passwordHash   String
   name           String
+  /// Best-effort split of `name` for existing records (backfilled once,
+  /// non-destructively); captured directly on Create User/Guest going
+  /// forward. `name` remains the canonical display field everywhere else.
+  givenName      String?
+  familyName     String?
   jobTitle       String?
+  division       String?
+  phone          String?
+  address        String?
+  visibility     DirectoryVisibility @default(VISIBLE)
   organizationId String
   isActive       Boolean         @default(true)
   /**
@@ -62,6 +82,17 @@ model User {
   mailTypeAttributeOptions MailTypeAttributeOption[]
   mailDocumentReferences   MailDocumentReference[]
   mailRelatedMails         MailRelatedMail[]
+  printRequests            PrintRequest[]
+  initiatedWorkflows       Workflow[]                @relation("WorkflowInitiatedBy")
+  workflowStepReviews      WorkflowStepReviewer[]
+  workflowTemplateSteps    WorkflowTemplateStepReviewer[]
+  workflowTemplatesCreated WorkflowTemplate[]
+  workflowOutcomeOptionsCreated WorkflowOutcomeOption[]
+  workflowEvents           WorkflowEvent[]           @relation("WorkflowEventActor")
+  roleAssignments          UserRoleAssignment[]
+  roleAssignmentsGranted   UserRoleAssignment[]      @relation("UserRoleAssignmentGrantedBy")
+  mailingGroupsCreated     MailingGroup[]            @relation("MailingGroupCreatedBy")
+  mailingGroupMemberships MailingGroupMember[]
 
   @@index([organizationId])
 }
@@ -99,18 +130,25 @@ model Project {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  ownerOrg         Organization?     @relation("ProjectOwnerOrg", fields: [ownerOrgId], references: [id])
-  members          ProjectMember[]
-  mailTypes        MailType[]
-  mails            Mail[]
-  folders          Folder[]
-  documentTypes    DocumentType[]
-  documents        Document[]
-  temporaryFiles   TemporaryFile[]
-  autoTexts        AutoText[]
-  mailInlineImages MailInlineImage[]
-  savedSearches    SavedSearch[]
-  auditLogs        AuditLog[]
+  ownerOrg                Organization?            @relation("ProjectOwnerOrg", fields: [ownerOrgId], references: [id])
+  members                 ProjectMember[]
+  mailTypes               MailType[]
+  mails                   Mail[]
+  folders                 Folder[]
+  documentTypes           DocumentType[]
+  documents               Document[]
+  temporaryFiles          TemporaryFile[]
+  autoTexts               AutoText[]
+  mailInlineImages        MailInlineImage[]
+  savedSearches           SavedSearch[]
+  auditLogs               AuditLog[]
+  printRequests           PrintRequest[]
+  workflows               Workflow[]
+  workflowTemplates       WorkflowTemplate[]
+  workflowOutcomeOptions  WorkflowOutcomeOption[]
+  documentMetadataOptions DocumentMetadataOption[]
+  roleAssignments         UserRoleAssignment[]
+  mailingGroups           MailingGroup[]
 
   @@index([ownerOrgId])
 }
@@ -199,6 +237,23 @@ enum MailResponseType {
   ACTION_BY
 }
 
+/**
+ * Why a document is being issued via a Transmittal — distinct from
+ * MailResponseType (which is about what response is due back), since a
+ * transmittal always has a reason for issue even when no response is
+ * required at all (e.g. "For Information").
+ */
+enum MailReasonForIssue {
+  FOR_APPROVAL
+  FOR_INFORMATION
+  FOR_CONSTRUCTION
+  FOR_REVIEW_COMMENT
+  FOR_TENDER
+  FOR_RECORD
+  AS_BUILT
+  SUPERSEDED
+}
+
 // Business/workflow status shown in the mail register (distinct from
 // MailStatus above, which tracks the internal draft-vs-sent lifecycle).
 enum MailWorkflowStatus {
@@ -211,7 +266,7 @@ enum MailWorkflowStatus {
 }
 
 model Mail {
-  id               String             @id @default(cuid())
+  id               String              @id @default(cuid())
   projectId        String
   mailNumber       String
   referenceNumber  String?
@@ -220,18 +275,19 @@ model Mail {
   /**
    * Sanitized rich-text HTML — canonical, rendered representation of the message body.
    */
-  messageHtml      String             @default("")
+  messageHtml      String              @default("")
   /**
    * Plain-text derivative of messageHtml, kept in sync on every save — used for search, accessibility, and fallback rendering.
    */
-  messageText      String             @default("")
+  messageText      String              @default("")
   attribute1       String?
   attribute2       String?
-  responseRequired Boolean            @default(false)
+  responseRequired Boolean             @default(false)
   responseDueDate  DateTime?
   responseType     MailResponseType?
-  status           MailStatus         @default(DRAFT)
-  workflowStatus   MailWorkflowStatus @default(NA)
+  reasonForIssue   MailReasonForIssue?
+  status           MailStatus          @default(DRAFT)
+  workflowStatus   MailWorkflowStatus  @default(NA)
   /**
    * Whether this record was created by our organization sending correspondence
    * out (OUTGOING, the default — New Mail) or by registering correspondence
@@ -240,12 +296,12 @@ model Mail {
    * message in both cases; this field only distinguishes who initiated the
    * record in our system.
    */
-  direction        MailDirection      @default(OUTGOING)
+  direction        MailDirection       @default(OUTGOING)
   senderId         String
   parentMailId     String?
   threadRootId     String?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
   sentAt           DateTime?
 
   project            Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -273,18 +329,36 @@ model Mail {
  * duplicate or modify the Document/DocumentVersion it points to.
  */
 model MailDocumentReference {
-  id          String   @id @default(cuid())
-  mailId      String
-  documentId  String
-  createdById String
-  createdAt   DateTime @default(now())
+  id                String   @id @default(cuid())
+  mailId            String
+  documentId        String
+  /**
+   * Snapshot of the specific DocumentVersion that was actually attached at
+   * the time this reference was created (nullable — older references from
+   * before this field existed, or plain Attach>Document references that
+   * don't need transmittal-grade accuracy, leave it unset). Without this,
+   * `document.currentRevision` is a live, mutable pointer — if the document
+   * is revised again later, a transmittal's "attached revision" would
+   * silently drift to the new revision instead of showing what was
+   * actually issued.
+   */
+  documentVersionId String?
+  /**
+   * Denormalized copy of the revision label at issue time, for resilient
+   * display even independent of the versionId row.
+   */
+  revisionAtIssue   String?
+  createdById       String
+  createdAt         DateTime @default(now())
 
-  mail      Mail     @relation(fields: [mailId], references: [id], onDelete: Cascade)
-  document  Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  createdBy User     @relation(fields: [createdById], references: [id])
+  mail            Mail             @relation(fields: [mailId], references: [id], onDelete: Cascade)
+  document        Document         @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  documentVersion DocumentVersion? @relation(fields: [documentVersionId], references: [id])
+  createdBy       User             @relation(fields: [createdById], references: [id])
 
   @@unique([mailId, documentId])
   @@index([documentId])
+  @@index([documentVersionId])
 }
 
 /**
@@ -422,14 +496,66 @@ model Folder {
 }
 
 model DocumentType {
-  id        String @id @default(cuid())
+  id        String  @id @default(cuid())
   projectId String
   name      String
+  /** Marks this type as belonging to the Drawings register (vs. general
+   * document types) — project-configurable, not a hardcoded name match. */
+  isDrawingType Boolean @default(false)
 
   project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
   documents Document[]
 
   @@unique([projectId, name])
+}
+
+enum DocumentMetadataCategory {
+  DISCIPLINE
+  FUNCTIONAL_BREAKDOWN
+  SPATIAL_BREAKDOWN
+}
+
+/**
+ * Real, project-configurable value lists for Discipline / Functional
+ * Breakdown / Spatial Breakdown — a single generic table rather than three
+ * near-identical models. Document itself keeps these as plain nullable
+ * strings (matching the existing `discipline` field precedent) so existing
+ * filters/exports/edit-metadata code needs no breaking changes; this table
+ * only supplies the real dropdown options instead of a hardcoded array, and
+ * new values can be added inline from the document metadata forms.
+ */
+model DocumentMetadataOption {
+  id        String                   @id @default(cuid())
+  projectId String
+  category  DocumentMetadataCategory
+  name      String
+  createdAt DateTime                 @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, category, name])
+  @@index([projectId, category])
+}
+
+enum DocumentReviewStatus {
+  A_NO_OBJECTION
+  B_NO_OBJECTION_WITH_COMMENTS
+  C_REVISE_RESUBMIT
+}
+
+/// Which register a Document actually belongs to (see Document.registerScope).
+enum DocumentRegisterScope {
+  STANDALONE_DOCUMENT
+  DRAWING
+  /// Reserved for a Document whose only real purpose is being referenced
+  /// from a Mail (see MailDocumentReference) rather than standing on its
+  /// own in either register — not currently assigned to any record.
+  MAIL_ATTACHMENT_REFERENCE
+  /// Real, imported data intentionally held out of the visible Document
+  /// Register pending review — not deleted, not archived, just not yet
+  /// approved for standalone visibility.
+  MIGRATION_HOLD
+  ARCHIVED
 }
 
 enum DocumentStatus {
@@ -443,30 +569,72 @@ enum DocumentStatus {
   SUPERSEDED
   WITHDRAWN
   CLOSED
+  NO_LONGER_IN_USE
+  /// Aconex-native review-cycle statuses (distinct from the generic
+  /// approval-workflow ones above) — added because real imported project
+  /// data uses this exact vocabulary and forcing it into APPROVED/REJECTED
+  /// would misrepresent the source status.
+  FOR_ACTION
+  FOR_INFORMATION
+  NO_OBJECTION
+  NO_OBJECTION_WITH_COMMENTS
+  NO_STATUS
 }
 
 model Document {
-  id              String         @id @default(cuid())
-  projectId       String
-  documentNo      String
-  title           String
-  description     String?
-  typeId          String?
-  folderId        String?
-  discipline      String?
-  status          DocumentStatus @default(DRAFT)
-  currentRevision String         @default("0")
-  createdById     String
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  id                  String                @id @default(cuid())
+  projectId           String
+  documentNo          String
+  title               String
+  description         String?
+  typeId              String?
+  folderId            String?
+  discipline          String?
+  /**
+   * Project-configurable classification (see DocumentMetadataOption) — a
+   * WBS/location-style breakdown used mainly for drawings but available to
+   * any document.
+   */
+  functionalBreakdown String?
+  spatialBreakdown    String?
+  /**
+   * Distinct from `status`: the reviewer's disposition on the current
+   * revision (Aconex-style A/B/C review outcome), independent of the
+   * document's own lifecycle status. Null = no review outcome recorded yet.
+   */
+  reviewStatus        DocumentReviewStatus?
+  status              DocumentStatus        @default(DRAFT)
+  currentRevision     String                @default("0")
+  /**
+   * A registered Document with no uploaded file yet — a real, reserved
+   * record (number, title, type, metadata) awaiting its first file. Flips
+   * to false automatically the moment a first DocumentVersion is added.
+   */
+  isPlaceholder       Boolean               @default(false)
+  /**
+   * Which register this Document actually belongs to — the authoritative,
+   * server-enforced separation between the Document Register and Drawings
+   * (previously the two pages shared one query with no scope filter at
+   * all, so the Document Register silently showed drawings too). Derived
+   * automatically from the resolved DocumentType.isDrawingType whenever a
+   * document is created or its type changes; MIGRATION_HOLD is a real,
+   * non-destructive lifecycle state for imported records not yet reviewed
+   * for standalone-register visibility — never a delete, never CSS-hidden.
+   */
+  registerScope       DocumentRegisterScope @default(STANDALONE_DOCUMENT)
+  createdById         String
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
 
-  project             Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  type                DocumentType?           @relation(fields: [typeId], references: [id])
-  folder              Folder?                 @relation(fields: [folderId], references: [id])
-  createdBy           User                    @relation("DocumentCreatedBy", fields: [createdById], references: [id])
+  project             Project                    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type                DocumentType?              @relation(fields: [typeId], references: [id])
+  folder              Folder?                    @relation(fields: [folderId], references: [id])
+  createdBy           User                       @relation("DocumentCreatedBy", fields: [createdById], references: [id])
   versions            DocumentVersion[]
   temporaryFileOrigin TemporaryFile?
   mailReferences      MailDocumentReference[]
+  printRequests       PrintRequestDocument[]
+  workflowDocuments   WorkflowDocument[]
 
   @@unique([projectId, documentNo])
   @@index([projectId, folderId])
@@ -487,8 +655,10 @@ model DocumentVersion {
   uploadedById String
   uploadedAt   DateTime @default(now())
 
-  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  uploadedBy User     @relation("DocumentVersionUploadedBy", fields: [uploadedById], references: [id])
+  document       Document                @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  uploadedBy     User                    @relation("DocumentVersionUploadedBy", fields: [uploadedById], references: [id])
+  mailReferences MailDocumentReference[]
+  workflowDocuments WorkflowDocument[]
 
   @@unique([documentId, versionNo])
   @@index([documentId])
@@ -530,12 +700,288 @@ model TemporaryFile {
 }
 
 // ---------------------------------------------------------------------------
+// Print requests
+// ---------------------------------------------------------------------------
+
+/**
+ * A real, persisted print request submitted against one or more selected
+ * documents — distinct from the existing browser-print view, which never
+ * creates a record.
+ */
+model PrintRequest {
+  id            String   @id @default(cuid())
+  projectId     String
+  requestedById String
+  details       String
+  createdAt     DateTime @default(now())
+
+  project     Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requestedBy User                   @relation(fields: [requestedById], references: [id])
+  documents   PrintRequestDocument[]
+
+  @@index([projectId])
+}
+
+model PrintRequestDocument {
+  id             String @id @default(cuid())
+  printRequestId String
+  documentId     String
+
+  printRequest PrintRequest @relation(fields: [printRequestId], references: [id], onDelete: Cascade)
+  document     Document     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([printRequestId, documentId])
+  @@index([documentId])
+}
+
+// ---------------------------------------------------------------------------
+// Workflows — a real, template-driven review state machine. Distinct from
+// (and never merged with) any future Document Process engine: a Workflow is
+// a reviewer sign-off sequence over a fixed set of documents; a Document
+// Process would be a metadata-routed deliverable/issue engine. Step
+// history and reviewer decisions are never overwritten — only ever
+// appended, matching the project's auditable-record principle.
+// ---------------------------------------------------------------------------
+
+enum WorkflowTemplateStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+}
+
+/// How a workflow's single final outcome is derived from its steps.
+/// FINAL_STEP_OUTCOME: whatever the last step group decided wins.
+/// LOWEST_OF_ALL_STEP_OUTCOMES: the most severe outcome reached by ANY step
+/// wins, even if a later step reached a better one (severity is
+/// WorkflowOutcomeOption.severityRank, higher = worse).
+enum WorkflowOutcomeRule {
+  FINAL_STEP_OUTCOME
+  LOWEST_OF_ALL_STEP_OUTCOMES
+}
+
+/// How a step with multiple reviewers decides it is done.
+/// ALL_REVIEWERS: every assigned reviewer must submit before the step (and
+/// the next step group) can proceed.
+/// ANY_REVIEWER: the first submission completes the step.
+/// REJECT_ON_ANY_REJECTION: like ALL_REVIEWERS, except a single reviewer
+/// marking a rejecting outcome immediately completes the step (and, per the
+/// template's outcome rule, may immediately fail the whole workflow)
+/// without waiting for the remaining reviewers.
+enum WorkflowStepCompletionRule {
+  ALL_REVIEWERS
+  ANY_REVIEWER
+  REJECT_ON_ANY_REJECTION
+}
+
+enum WorkflowStatus {
+  IN_PROGRESS
+  COMPLETED
+  REJECTED
+  TERMINATED
+}
+
+enum WorkflowStepInstanceStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  SKIPPED
+  TERMINATED
+}
+
+/// A project-configurable review outcome value (Aconex-style A/B/C/D review
+/// status set) — real DB-backed master data, never hard-coded, per the
+/// explicit requirement that outcome values be project-configurable.
+model WorkflowOutcomeOption {
+  id            String  @id @default(cuid())
+  projectId     String
+  code          String
+  label         String
+  /// Higher = more severe/worse outcome — drives LOWEST_OF_ALL_STEP_OUTCOMES
+  /// and REJECT_ON_ANY_REJECTION.
+  severityRank  Int
+  isRejection   Boolean @default(false)
+  sortOrder     Int     @default(0)
+  createdById   String
+  createdAt     DateTime @default(now())
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User    @relation(fields: [createdById], references: [id])
+
+  @@unique([projectId, code])
+  @@index([projectId])
+}
+
+model WorkflowTemplate {
+  id          String                 @id @default(cuid())
+  projectId   String
+  name        String
+  description String?
+  outcomeRule WorkflowOutcomeRule    @default(FINAL_STEP_OUTCOME)
+  status      WorkflowTemplateStatus @default(DRAFT)
+  createdById String
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+
+  project   Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User                   @relation(fields: [createdById], references: [id])
+  steps     WorkflowTemplateStep[]
+  workflows Workflow[]
+
+  @@unique([projectId, name])
+  @@index([projectId, status])
+}
+
+/// Steps sharing the same groupNo within a template run in parallel; groups
+/// run in ascending groupNo order — this single field is what makes
+/// serial and parallel steps the same underlying structure instead of two
+/// separate concepts.
+model WorkflowTemplateStep {
+  id               String                     @id @default(cuid())
+  templateId       String
+  name             String
+  groupNo          Int
+  durationDays     Int                        @default(5)
+  completionRule   WorkflowStepCompletionRule @default(ALL_REVIEWERS)
+  commentsRequired Boolean                    @default(false)
+
+  template  WorkflowTemplate               @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  reviewers WorkflowTemplateStepReviewer[]
+
+  @@unique([templateId, name])
+  @@index([templateId, groupNo])
+}
+
+model WorkflowTemplateStepReviewer {
+  id             String @id @default(cuid())
+  templateStepId String
+  userId         String
+
+  templateStep WorkflowTemplateStep @relation(fields: [templateStepId], references: [id], onDelete: Cascade)
+  user         User                 @relation(fields: [userId], references: [id])
+
+  @@unique([templateStepId, userId])
+}
+
+model Workflow {
+  id               String              @id @default(cuid())
+  projectId        String
+  /// Real, human-facing sequential number ("<PROJECT CODE>-WF-00001"),
+  /// generated the same way as Mail's mailNumber — distinct from the
+  /// internal cuid `id`, and what Workflow Search's "Workflow No." field
+  /// searches against.
+  workflowNumber   String
+  templateId       String?
+  title            String
+  outcomeRule      WorkflowOutcomeRule
+  status           WorkflowStatus      @default(IN_PROGRESS)
+  initiatedById    String
+  /// Set when this workflow was started from an active review as a
+  /// subworkflow — parent/child relationship is explicit and queryable.
+  parentWorkflowId String?
+  finalOutcomeCode String?
+  terminatedReason String?
+  /// Snapshot of the first step group's due date at start time — unlike a
+  /// step's own dueDate (which reflects whichever step is currently
+  /// active), this never changes once the workflow starts, matching
+  /// Workflow Search's "Original Due Date" field.
+  originalDueDate  DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  completedAt      DateTime?
+
+  project        Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  template       WorkflowTemplate?      @relation(fields: [templateId], references: [id])
+  initiatedBy    User                   @relation("WorkflowInitiatedBy", fields: [initiatedById], references: [id])
+  parentWorkflow Workflow?              @relation("Subworkflow", fields: [parentWorkflowId], references: [id])
+  subworkflows   Workflow[]             @relation("Subworkflow")
+  documents      WorkflowDocument[]
+  steps          WorkflowStepInstance[]
+  events         WorkflowEvent[]
+
+  @@unique([projectId, workflowNumber])
+  @@index([projectId, status])
+  @@index([parentWorkflowId])
+}
+
+model WorkflowDocument {
+  id                String @id @default(cuid())
+  workflowId        String
+  documentId        String
+  /// Snapshot of the version actually under review at start time — the
+  /// same anti-drift pattern used by MailDocumentReference.
+  documentVersionId String?
+
+  workflow        Workflow         @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  document        Document         @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  documentVersion DocumentVersion? @relation(fields: [documentVersionId], references: [id])
+
+  @@unique([workflowId, documentId])
+  @@index([documentId])
+}
+
+model WorkflowStepInstance {
+  id               String                     @id @default(cuid())
+  workflowId       String
+  templateStepId   String?
+  name             String
+  groupNo          Int
+  durationDays     Int                        @default(5)
+  completionRule   WorkflowStepCompletionRule
+  commentsRequired Boolean                    @default(false)
+  status           WorkflowStepInstanceStatus @default(PENDING)
+  dueDate          DateTime?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  /// This step's own aggregated outcome once complete (the most severe
+  /// outcome among its reviewers).
+  outcomeCode      String?
+
+  workflow  Workflow               @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  reviewers WorkflowStepReviewer[]
+
+  @@index([workflowId, groupNo])
+}
+
+model WorkflowStepReviewer {
+  id             String    @id @default(cuid())
+  stepInstanceId String
+  userId         String
+  outcomeCode    String?
+  comments       String?
+  reviewedAt     DateTime?
+
+  stepInstance WorkflowStepInstance @relation(fields: [stepInstanceId], references: [id], onDelete: Cascade)
+  user         User                 @relation(fields: [userId], references: [id])
+
+  @@unique([stepInstanceId, userId])
+  @@index([userId])
+}
+
+/// Append-only workflow-specific event history — surfaced as the Workflow
+/// detail page's Event Log, distinct from the general AuditLog (which also
+/// gets a matching entry for cross-module audit consistency).
+model WorkflowEvent {
+  id         String   @id @default(cuid())
+  workflowId String
+  action     String
+  actorId    String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  workflow Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  actor    User?    @relation("WorkflowEventActor", fields: [actorId], references: [id])
+
+  @@index([workflowId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
 // Saved searches / audit
 // ---------------------------------------------------------------------------
 
 enum SearchModule {
   MAIL
   DOCUMENTS
+  WORKFLOWS
 }
 
 model SavedSearch {
@@ -567,5 +1013,124 @@ model AuditLog {
   project Project? @relation(fields: [projectId], references: [id])
 
   @@index([projectId, entityType, entityId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// RBAC — granular permissions, layered alongside (not replacing) the
+// existing ProjectMember.role coarse gate. Existing requireProjectRole()
+// checks on Documents/Mail/Workflow are untouched; this powers only the new
+// Directory/Mailing-Group/RBAC-admin surface introduced alongside it, plus
+// whatever is migrated onto it later.
+// ---------------------------------------------------------------------------
+
+enum RoleScope {
+  ORGANIZATION
+  PROJECT
+}
+
+model Permission {
+  id          String @id @default(cuid())
+  /// Stable machine key, e.g. "DIRECTORY_CREATE_GUEST" — referenced directly
+  /// in code via requirePermission(), never a free-text string at call sites.
+  code        String @unique
+  description String
+  category    String
+
+  rolePermissions RolePermission[]
+
+  @@index([category])
+}
+
+model Role {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  scope       RoleScope
+  /// System roles (Project Administrator/Member/Viewer, seeded from the
+  /// existing ProjectRole enum) cannot be deleted — they are the
+  /// compatibility bridge for every existing ProjectMember.
+  isSystem    Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  permissions RolePermission[]
+  assignments UserRoleAssignment[]
+
+  @@unique([name, scope])
+}
+
+model RolePermission {
+  id           String @id @default(cuid())
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([permissionId])
+}
+
+/// A user's grant of one Role, scoped to a specific project (PROJECT-scope
+/// roles) or organization (ORGANIZATION-scope roles). One user can hold
+/// several — e.g. Project Administrator on Project A and Project Member on
+/// Project B — since scope is carried per-assignment, not on the user.
+model UserRoleAssignment {
+  id             String   @id @default(cuid())
+  userId         String
+  roleId         String
+  projectId      String?
+  organizationId String?
+  createdById    String?
+  createdAt      DateTime @default(now())
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role         Role          @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  project      Project?      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User?         @relation("UserRoleAssignmentGrantedBy", fields: [createdById], references: [id])
+
+  @@unique([userId, roleId, projectId, organizationId])
+  @@index([userId])
+  @@index([projectId])
+  @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// Mailing Groups — real distribution groups, selectable in the Mail
+// recipient picker alongside individual Directory users.
+// ---------------------------------------------------------------------------
+
+model MailingGroup {
+  id             String   @id @default(cuid())
+  projectId      String
+  name           String
+  organizationId String?
+  /// Locked groups reject membership changes from anyone without
+  /// DIRECTORY_MANAGE_GROUP_MEMBERS — enforced server-side, not just a
+  /// disabled button.
+  locked         Boolean  @default(false)
+  createdById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  project      Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  organization Organization?        @relation(fields: [organizationId], references: [id])
+  createdBy    User                 @relation("MailingGroupCreatedBy", fields: [createdById], references: [id])
+  members      MailingGroupMember[]
+
+  @@unique([projectId, name])
+}
+
+model MailingGroupMember {
+  id      String @id @default(cuid())
+  groupId String
+  userId  String
+
+  group MailingGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
   @@index([userId])
 }

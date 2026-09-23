@@ -15,6 +15,7 @@ import {
   normalizeTab,
   tabWhere,
   buildMailFilters,
+  buildStandardSearchFilter,
   parsePage,
   MAIL_PAGE_SIZE,
   type MailSearchParams,
@@ -42,10 +43,38 @@ export default async function MailListPage({
   const tab = normalizeTab(params.tab);
   const page = parsePage(params.page);
 
-  const baseWhere = tabWhere(tab, projectId, user.id, params.recipientType);
+  const stdKey = params.std;
+  // "Org" standard searches show correspondence across the whole
+  // organization (any teammate as sender/recipient), not just mail
+  // addressed to me — so they must not inherit tabWhere's per-user
+  // authorization scope, only the org-membership scope baked into the
+  // standard search filter itself.
+  const isOrgStd = stdKey === "orgClosedOut" || stdKey === "orgReceived30d";
+
+  const baseWhere: Prisma.MailWhereInput = isOrgStd
+    ? { projectId }
+    : tabWhere(tab, projectId, user.id, params.recipientType);
   const extraFilters = buildMailFilters(params, user.id);
-  const where: Prisma.MailWhereInput =
+  let where: Prisma.MailWhereInput =
     extraFilters.length > 0 ? { AND: [baseWhere, ...extraFilters] } : baseWhere;
+
+  if (stdKey) {
+    const rfiType =
+      stdKey === "rfiReceived"
+        ? await prisma.mailType.findUnique({
+            where: { projectId_name: { projectId, name: "Request for Information" } },
+            select: { id: true },
+          })
+        : null;
+    const stdFilter = buildStandardSearchFilter(stdKey, {
+      userId: user.id,
+      organizationId: membership.organizationId,
+      rfiTypeId: rfiType?.id ?? null,
+    });
+    if (stdFilter) {
+      where = { AND: [where, stdFilter] };
+    }
+  }
 
   const [mails, total, allCount, inboxCount, sentCount, draftsCount, mailTypes] = await Promise.all([
     prisma.mail.findMany({
@@ -54,7 +83,8 @@ export default async function MailListPage({
         sender: { include: { organization: true } },
         type: true,
         recipients: { include: { user: { include: { organization: true } } } },
-        _count: { select: { attachments: true } },
+        replies: { select: { sentAt: true, createdAt: true }, orderBy: { createdAt: "desc" }, take: 1 },
+        _count: { select: { attachments: true, replies: true } },
       },
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * MAIL_PAGE_SIZE,
@@ -80,7 +110,11 @@ export default async function MailListPage({
         m.status === "DRAFT"
           ? m.direction === "INCOMING"
             ? `/mail/register-incoming?draftId=${m.id}`
-            : `/mail/new?draftId=${m.id}`
+            : m.type.name === "Transmittal"
+              ? `/documents/transmittals/new?draftId=${m.id}`
+              : m.type.name === "Tender Transmittal"
+                ? `/documents/transmittals/new?kind=tender&draftId=${m.id}`
+                : `/mail/new?draftId=${m.id}`
           : `/mail/${m.id}`,
       mailNumber: m.mailNumber,
       subject: m.subject,
@@ -93,6 +127,9 @@ export default async function MailListPage({
       typeLabel: m.type.name,
       typeId: m.typeId,
       hasAttachments: m._count.attachments > 0,
+      repliesCount: m._count.replies,
+      replyDate: m.replies[0] ? (m.replies[0].sentAt ?? m.replies[0].createdAt).toLocaleDateString("en-GB") : "—",
+      due: m.responseDueDate ? m.responseDueDate.toLocaleDateString("en-GB") : "—",
     };
   });
 
@@ -113,16 +150,28 @@ export default async function MailListPage({
     if (params.recipients) sp.set("recipients", params.recipients);
     if (params.status) sp.set("status", params.status);
     if (params.type) sp.set("type", params.type);
+    if (params.dateField) sp.set("dateField", params.dateField);
     if (params.dateFrom) sp.set("dateFrom", params.dateFrom);
     if (params.dateTo) sp.set("dateTo", params.dateTo);
+    if (params.dateQueries) sp.set("dateQueries", params.dateQueries);
+    if (params.std) sp.set("std", params.std);
     sp.set("page", String(targetPage));
     return `/mail?${sp.toString()}`;
   }
 
+  const STANDARD_SEARCH_LABELS: Record<string, string> = {
+    receivedToday: "My mail received today",
+    sentToday: "My mail sent today",
+    orgClosedOut: "Org mail Closed Out",
+    orgReceived30d: "Org mail received in last 30 days",
+    rfiReceived: "RFIs received report",
+  };
+  const pageTitle = stdKey && STANDARD_SEARCH_LABELS[stdKey] ? `Mail — ${STANDARD_SEARCH_LABELS[stdKey]}` : "Mail";
+
   return (
     <div>
       <PageHeader
-        title="Mail"
+        title={pageTitle}
         actions={
           membership.role !== "VIEWER" ? (
             <Link href="/mail/new" className={buttonClass("primary", "md")}>

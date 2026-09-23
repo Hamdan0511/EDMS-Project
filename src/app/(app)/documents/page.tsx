@@ -6,7 +6,6 @@ import { Pagination } from "@/components/ui/pagination";
 import { PageSizeSelect } from "@/components/documents/page-size-select";
 import { DocumentsFilters } from "@/components/documents/documents-filters";
 import { DocumentsTable, type DocumentRow } from "@/components/documents/documents-table";
-import { FileText } from "@/components/ui/icons";
 import {
   buildWhere,
   parsePage,
@@ -14,6 +13,8 @@ import {
   parseSort,
   type DocumentSearchParams,
 } from "@/lib/documents/query";
+import { getDocumentMetadataOptions } from "@/lib/documents/metadata-options";
+import type { Prisma } from "@prisma/client";
 
 export default async function DocumentsPage({
   searchParams,
@@ -35,29 +36,37 @@ export default async function DocumentsPage({
   const page = parsePage(params.page);
   const pageSize = parsePageSize(params.pageSize);
   const { orderBy, sort, dir } = parseSort(params);
-  const where = buildWhere(projectId, params);
+  // The Document Register only ever shows documents actually scoped to it —
+  // drawings (and any other non-standalone lifecycle state) live in their
+  // own register and must never leak in here, enforced at the query layer,
+  // not by hiding rows client-side.
+  const where: Prisma.DocumentWhereInput = { AND: [buildWhere(projectId, params), { registerScope: "STANDALONE_DOCUMENT" }] };
 
-  const [documents, total, documentTypes, projectMembers] = await Promise.all([
-    prisma.document.findMany({
-      where,
-      include: {
-        type: true,
-        createdBy: { include: { organization: true } },
-        versions: { orderBy: { versionNo: "desc" }, take: 1 },
-      },
-      orderBy,
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-    }),
-    prisma.document.count({ where }),
-    prisma.documentType.findMany({ where: { projectId }, orderBy: { name: "asc" } }),
-    prisma.projectMember.findMany({
-      where: { projectId },
-      include: { organization: true },
-      distinct: ["organizationId"],
-      orderBy: { organization: { name: "asc" } },
-    }),
-  ]);
+  const [documents, total, documentTypes, projectMembers, disciplineOptions, functionalBreakdownOptions, spatialBreakdownOptions] =
+    await Promise.all([
+      prisma.document.findMany({
+        where,
+        include: {
+          type: true,
+          createdBy: { include: { organization: true } },
+          versions: { orderBy: { versionNo: "desc" }, take: 1 },
+        },
+        orderBy,
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      prisma.document.count({ where }),
+      prisma.documentType.findMany({ where: { projectId, isDrawingType: false }, orderBy: { name: "asc" } }),
+      prisma.projectMember.findMany({
+        where: { projectId },
+        include: { organization: true },
+        distinct: ["organizationId"],
+        orderBy: { organization: { name: "asc" } },
+      }),
+      getDocumentMetadataOptions(projectId, "DISCIPLINE"),
+      getDocumentMetadataOptions(projectId, "FUNCTIONAL_BREAKDOWN"),
+      getDocumentMetadataOptions(projectId, "SPATIAL_BREAKDOWN"),
+    ]);
 
   const rows: DocumentRow[] = documents.map((d) => {
     const version = d.versions[0];
@@ -68,7 +77,10 @@ export default async function DocumentsPage({
       revision: d.currentRevision,
       typeLabel: d.type?.name ?? "",
       status: d.status,
+      reviewStatus: d.reviewStatus,
       discipline: d.discipline,
+      functionalBreakdown: d.functionalBreakdown,
+      spatialBreakdown: d.spatialBreakdown,
       uploadedByName: d.createdBy.name,
       organizationName: d.createdBy.organization.name,
       dateUploaded: d.createdAt.toLocaleDateString("en-GB"),
@@ -76,10 +88,14 @@ export default async function DocumentsPage({
       fileName: version?.fileName ?? null,
       mimeType: version?.mimeType ?? null,
       fileSizeBytes: version?.sizeBytes ?? null,
+      isPlaceholder: d.isPlaceholder,
       metadata: {
         title: d.title,
         typeName: d.type?.name ?? "",
         discipline: d.discipline ?? "",
+        functionalBreakdown: d.functionalBreakdown ?? "",
+        spatialBreakdown: d.spatialBreakdown ?? "",
+        reviewStatus: d.reviewStatus ?? "",
         status: d.status,
         description: d.description ?? "",
       },
@@ -100,6 +116,9 @@ export default async function DocumentsPage({
     if (params.typeId) sp.set("typeId", params.typeId);
     if (params.status) sp.set("status", params.status);
     if (params.discipline) sp.set("discipline", params.discipline);
+    if (params.functionalBreakdown) sp.set("functionalBreakdown", params.functionalBreakdown);
+    if (params.spatialBreakdown) sp.set("spatialBreakdown", params.spatialBreakdown);
+    if (params.reviewStatus) sp.set("reviewStatus", params.reviewStatus);
     if (params.uploadedBy) sp.set("uploadedBy", params.uploadedBy);
     if (params.organizationId) sp.set("organizationId", params.organizationId);
     if (params.dateUploadedFrom) sp.set("dateUploadedFrom", params.dateUploadedFrom);
@@ -128,36 +147,46 @@ export default async function DocumentsPage({
           <input type="hidden" name="sort" value={sort} />
           <input type="hidden" name="dir" value={dir} />
           <input type="hidden" name="pageSize" value={pageSize} />
-          <DocumentsFilters q={params.q ?? ""} typeOptions={typeOptions} organizationOptions={organizationOptions} />
+          <DocumentsFilters
+            projectId={projectId}
+            q={params.q ?? ""}
+            typeOptions={typeOptions}
+            organizationOptions={organizationOptions}
+            disciplineOptions={disciplineOptions}
+            functionalBreakdownOptions={functionalBreakdownOptions}
+            spatialBreakdownOptions={spatialBreakdownOptions}
+          />
 
-          {rows.length === 0 ? (
-            <EmptyState
-              icon={<FileText size={28} strokeWidth={1.25} />}
-              title="No documents found"
-              description="Documents registered in this project will appear here. Use Split a PDF or Temporary Files → Register as Document to add documents."
-            />
-          ) : (
+          <DocumentsTable
+            projectId={projectId}
+            rows={rows}
+            total={total}
+            filters={{
+              documentNo: params.documentNo ?? "",
+              title: params.title ?? "",
+              revision: params.revision ?? "",
+              typeId: params.typeId ?? "",
+              status: params.status ?? "",
+              discipline: params.discipline ?? "",
+              functionalBreakdown: params.functionalBreakdown ?? "",
+              spatialBreakdown: params.spatialBreakdown ?? "",
+              reviewStatus: params.reviewStatus ?? "",
+              uploadedBy: params.uploadedBy ?? "",
+              organizationId: params.organizationId ?? "",
+              dateUploadedFrom: params.dateUploadedFrom ?? "",
+            }}
+            sort={sort}
+            dir={dir}
+            canManage={canManage}
+            typeOptions={typeOptions}
+            organizationOptions={organizationOptions}
+            documentTypeNames={documentTypeNames}
+            disciplineOptions={disciplineOptions}
+            functionalBreakdownOptions={functionalBreakdownOptions}
+            spatialBreakdownOptions={spatialBreakdownOptions}
+          />
+          {rows.length > 0 && (
             <>
-              <DocumentsTable
-                rows={rows}
-                filters={{
-                  documentNo: params.documentNo ?? "",
-                  title: params.title ?? "",
-                  revision: params.revision ?? "",
-                  typeId: params.typeId ?? "",
-                  status: params.status ?? "",
-                  discipline: params.discipline ?? "",
-                  uploadedBy: params.uploadedBy ?? "",
-                  organizationId: params.organizationId ?? "",
-                  dateUploadedFrom: params.dateUploadedFrom ?? "",
-                }}
-                sort={sort}
-                dir={dir}
-                canManage={canManage}
-                typeOptions={typeOptions}
-                organizationOptions={organizationOptions}
-                documentTypeNames={documentTypeNames}
-              />
               <div className="mt-4 flex items-center justify-between">
                 <Pagination page={page} pageSize={pageSize} total={total} buildHref={buildPageHref} />
                 <PageSizeSelect pageSize={pageSize} />

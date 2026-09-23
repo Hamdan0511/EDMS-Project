@@ -1,22 +1,29 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, FormEvent } from "react";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { DOCUMENT_STATUS_OPTIONS, DISCIPLINE_OPTIONS } from "@/lib/documents/status";
+import { DOCUMENT_STATUS_OPTIONS, DOCUMENT_REVIEW_STATUS_OPTIONS } from "@/lib/documents/status";
 
 export function DocumentAdvancedSearchModal({
   typeOptions,
   organizationOptions,
+  disciplineOptions,
+  functionalBreakdownOptions,
+  spatialBreakdownOptions,
 }: {
   typeOptions: { id: string; name: string }[];
   organizationOptions: { id: string; name: string }[];
+  disciplineOptions: string[];
+  functionalBreakdownOptions: string[];
+  spatialBreakdownOptions: string[];
 }) {
   const [open, setOpen] = useState(false);
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
 
   function submit(e: FormEvent<HTMLFormElement>) {
@@ -27,7 +34,11 @@ export function DocumentAdvancedSearchModal({
       const v = String(value).trim();
       if (v) params.set(key, v);
     }
-    router.push(`/documents?${params.toString()}`);
+    // Preserve the register's current view (e.g. Drawings grid/list) across
+    // an Advanced Search submit, same as Clear All / pagination links do.
+    const view = searchParams.get("view");
+    if (view) params.set("view", view);
+    router.push(`${pathname}?${params.toString()}`);
     setOpen(false);
   }
 
@@ -74,8 +85,35 @@ export function DocumentAdvancedSearchModal({
             Discipline
             <Select name="discipline" defaultValue={searchParams.get("discipline") ?? ""}>
               <option value="">Any</option>
-              {DISCIPLINE_OPTIONS.map((d) => (
+              {disciplineOptions.map((d) => (
                 <option key={d} value={d}>{d}</option>
+              ))}
+            </Select>
+          </label>
+          <label className={field}>
+            Functional Breakdown
+            <Select name="functionalBreakdown" defaultValue={searchParams.get("functionalBreakdown") ?? ""}>
+              <option value="">Any</option>
+              {functionalBreakdownOptions.map((f) => (
+                <option key={f} value={f}>{f}</option>
+              ))}
+            </Select>
+          </label>
+          <label className={field}>
+            Spatial Breakdown
+            <Select name="spatialBreakdown" defaultValue={searchParams.get("spatialBreakdown") ?? ""}>
+              <option value="">Any</option>
+              {spatialBreakdownOptions.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </Select>
+          </label>
+          <label className={field}>
+            Review Status
+            <Select name="reviewStatus" defaultValue={searchParams.get("reviewStatus") ?? ""}>
+              <option value="">Any</option>
+              {DOCUMENT_REVIEW_STATUS_OPTIONS.map((s) => (
+                <option key={s.value} value={s.value}>{s.label}</option>
               ))}
             </Select>
           </label>
@@ -92,7 +130,13 @@ export function DocumentAdvancedSearchModal({
               ))}
             </Select>
           </label>
-          <div />
+          <label
+            className="flex items-center gap-1.5 self-end pb-1.5 text-xs font-medium text-text-muted"
+            title="Full-text search inside file contents is not supported by this system yet — search matches document number, title, and file name only."
+          >
+            <input type="checkbox" disabled className="h-3.5 w-3.5" />
+            Search file content (not available)
+          </label>
           <label className={field}>
             Date Uploaded From
             <Input type="date" name="dateUploadedFrom" defaultValue={searchParams.get("dateUploadedFrom") ?? ""} />

@@ -20,12 +20,12 @@ export function MailActionsMenu({
   const router = useRouter();
   const [pending, setPending] = useState(false);
 
-  async function markClosedOut(close: () => void) {
+  async function setWorkflowStatus(close: () => void, workflowStatus: "CLOSED_OUT" | "NO_ACTION_REQUIRED") {
     setPending(true);
     await fetch(`/api/mail/${mailId}/status`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workflowStatus: "CLOSED_OUT" }),
+      body: JSON.stringify({ workflowStatus }),
     });
     setPending(false);
     close();
@@ -81,11 +81,22 @@ export function MailActionsMenu({
             <button
               type="button"
               disabled={pending}
-              onClick={() => markClosedOut(close)}
+              onClick={() => setWorkflowStatus(close, "CLOSED_OUT")}
               className={`flex items-center gap-1.5 ${itemClass}`}
             >
               <CheckCircle2 size={13} />
               {pending ? "Updating..." : "Mark as Closed-Out"}
+            </button>
+          )}
+          {currentStatus !== "Closed-Out" && currentStatus !== "No Action Required" && (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => setWorkflowStatus(close, "NO_ACTION_REQUIRED")}
+              className={`flex items-center gap-1.5 ${itemClass}`}
+            >
+              <CheckCircle2 size={13} />
+              {pending ? "Updating..." : "Mark No Action Required"}
             </button>
           )}
         </div>

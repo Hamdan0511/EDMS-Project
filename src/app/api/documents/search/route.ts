@@ -3,8 +3,24 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { assertProjectMember } from "@/lib/project-context";
 import { prisma } from "@/lib/prisma";
 
-/** Read-only lookup feeding Register Incoming Mail's Attach > Document
- * modal — never mutates the Document Register. */
+// The two "live" registers — always the only candidates through this
+// route, whether or not a caller narrows further with ?registerScope=.
+// Mail's "Attach Document" lookup and the Transmittal History search omit
+// that param on purpose (a mail or transmittal can reference either a
+// standalone document or a drawing), but even then MIGRATION_HOLD /
+// ARCHIVED / MAIL_ATTACHMENT_REFERENCE documents are excluded — a held or
+// archived document should never casually resurface as an attach/update
+// target. This route only ever reads; it never creates or converts.
+const SEARCHABLE_SCOPES = ["STANDALONE_DOCUMENT", "DRAWING"] as const;
+type SearchableScope = (typeof SEARCHABLE_SCOPES)[number];
+function isSearchableScope(value: string | null): value is SearchableScope {
+  return !!value && (SEARCHABLE_SCOPES as readonly string[]).includes(value);
+}
+
+/** Read-only lookup feeding: Add/Update Documents' "Update Existing
+ * Document" search, Placeholder completion search, Transmittal History's
+ * document search, and Register Incoming Mail's Attach > Document modal.
+ * Never mutates the Document Register — this route only ever reads. */
 export async function GET(request: NextRequest) {
   const user = await getCurrentUser();
   if (!user) {
@@ -14,6 +30,12 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const projectId = searchParams.get("projectId");
   const q = searchParams.get("q")?.trim() ?? "";
+  const placeholdersOnly = searchParams.get("placeholdersOnly") === "1";
+  const registerScopeParam = searchParams.get("registerScope");
+  // Whether or not a specific scope was requested, MIGRATION_HOLD /
+  // ARCHIVED / MAIL_ATTACHMENT_REFERENCE are never candidates through this
+  // endpoint — only the two "live" registers are ever searchable here.
+  const registerScopeFilter = isSearchableScope(registerScopeParam) ? registerScopeParam : { in: [...SEARCHABLE_SCOPES] };
 
   if (!projectId) {
     return NextResponse.json({ error: "projectId is required" }, { status: 400 });
@@ -28,6 +50,8 @@ export async function GET(request: NextRequest) {
   const documents = await prisma.document.findMany({
     where: {
       projectId,
+      registerScope: registerScopeFilter,
+      ...(placeholdersOnly ? { isPlaceholder: true } : {}),
       ...(q
         ? {
             OR: [

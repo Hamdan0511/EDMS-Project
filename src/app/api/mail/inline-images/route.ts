@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/session";
 import { assertProjectMember } from "@/lib/project-context";
-import { requireProjectRole, ForbiddenRoleError } from "@/lib/auth/roles";
+import { requirePermission, ForbiddenPermissionError } from "@/lib/auth/permissions";
 import { uploadInlineImage, InlineImageError } from "@/lib/mail/inline-image-service";
 
 export async function POST(request: NextRequest) {
@@ -16,17 +16,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "projectId is required" }, { status: 400 });
   }
 
-  let membership;
   try {
-    membership = await assertProjectMember(user, projectId);
+    await assertProjectMember(user, projectId);
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   try {
-    requireProjectRole(membership, ["ADMIN", "MEMBER"]);
+    await requirePermission(user.id, "MAIL_SEND", { projectId });
   } catch (err) {
-    if (err instanceof ForbiddenRoleError) {
+    if (err instanceof ForbiddenPermissionError) {
       return NextResponse.json({ error: "Viewers cannot insert images into mail" }, { status: 403 });
     }
     throw err;

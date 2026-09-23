@@ -57,6 +57,14 @@ export async function getCurrentUser(): Promise<User | null> {
     return null;
   }
 
+  // Disabling a user (Directory > Account Status) must take effect
+  // immediately, not just block future logins — an already-issued session
+  // token would otherwise keep working until its 7-day expiry.
+  if (!session.user.isActive) {
+    await prisma.session.delete({ where: { id: session.id } }).catch(() => {});
+    return null;
+  }
+
   return session.user;
 }
 

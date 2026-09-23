@@ -17,6 +17,9 @@ export function DocumentRowMenu({
   canManage,
   metadata,
   documentTypeNames,
+  disciplineOptions,
+  functionalBreakdownOptions,
+  spatialBreakdownOptions,
 }: {
   documentId: string;
   documentNo: string;
@@ -26,6 +29,9 @@ export function DocumentRowMenu({
   canManage: boolean;
   metadata: DocumentMetadataInitial;
   documentTypeNames: string[];
+  disciplineOptions: string[];
+  functionalBreakdownOptions: string[];
+  spatialBreakdownOptions: string[];
 }) {
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
@@ -130,6 +136,9 @@ export function DocumentRowMenu({
           documentId={documentId}
           initial={metadata}
           documentTypeNames={documentTypeNames}
+          disciplineOptions={disciplineOptions}
+          functionalBreakdownOptions={functionalBreakdownOptions}
+          spatialBreakdownOptions={spatialBreakdownOptions}
           open={editModalOpen}
           onClose={() => setEditModalOpen(false)}
         />

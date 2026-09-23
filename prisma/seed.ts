@@ -72,8 +72,188 @@ async function main() {
     update: {},
     create: { projectId: project.id, name: "General Correspondence" },
   });
+  await prisma.mailType.upsert({
+    where: { projectId_name: { projectId: project.id, name: "Request for Information" } },
+    update: {},
+    create: { projectId: project.id, name: "Request for Information" },
+  });
+
+  // Document/Drawing classification configuration — project reference
+  // metadata (not business data), matching the MailType bootstrap above.
+  const drawingTypes = [
+    "Design Drawing",
+    "Material Approval Request",
+    "Material Inspection Request",
+    "Method Statement",
+    "Minutes of Meeting",
+    "Mock-up",
+    "Plan",
+    "Shop Drawing",
+  ];
+  for (const name of drawingTypes) {
+    await prisma.documentType.upsert({
+      where: { projectId_name: { projectId: project.id, name } },
+      update: { isDrawingType: true },
+      create: { projectId: project.id, name, isDrawingType: true },
+    });
+  }
+
+  const metadataOptions: { category: "DISCIPLINE" | "FUNCTIONAL_BREAKDOWN" | "SPATIAL_BREAKDOWN"; name: string }[] = [
+    { category: "DISCIPLINE", name: "Interior Design" },
+    { category: "DISCIPLINE", name: "Multiple Disciplines" },
+    { category: "DISCIPLINE", name: "Other Discipline" },
+    { category: "FUNCTIONAL_BREAKDOWN", name: "CP-Central Plaza" },
+    { category: "FUNCTIONAL_BREAKDOWN", name: "F1-Facilities 1" },
+    { category: "FUNCTIONAL_BREAKDOWN", name: "F2-Facilities 2" },
+    { category: "FUNCTIONAL_BREAKDOWN", name: "F3-Facilities 3" },
+    { category: "FUNCTIONAL_BREAKDOWN", name: "F4-Facilities 4" },
+    { category: "FUNCTIONAL_BREAKDOWN", name: "MA-Main Contractor" },
+    { category: "FUNCTIONAL_BREAKDOWN", name: "NA-National Archives" },
+    { category: "FUNCTIONAL_BREAKDOWN", name: "NL-National Library" },
+    { category: "SPATIAL_BREAKDOWN", name: "00-Ground Floor_Plaza Level" },
+    { category: "SPATIAL_BREAKDOWN", name: "01-Level 01" },
+    { category: "SPATIAL_BREAKDOWN", name: "02-Level 02" },
+    { category: "SPATIAL_BREAKDOWN", name: "03-Level 03" },
+    { category: "SPATIAL_BREAKDOWN", name: "04-Level 04" },
+    { category: "SPATIAL_BREAKDOWN", name: "B1-Basement_Garden Level" },
+    { category: "SPATIAL_BREAKDOWN", name: "MS-Multiple Spatial Subdivisions" },
+    { category: "SPATIAL_BREAKDOWN", name: "NS-No Spatial Subdivision" },
+  ];
+  for (const opt of metadataOptions) {
+    await prisma.documentMetadataOption.upsert({
+      where: { projectId_category_name: { projectId: project.id, category: opt.category, name: opt.name } },
+      update: {},
+      create: { projectId: project.id, category: opt.category, name: opt.name },
+    });
+  }
+
+  // Real, project-configurable workflow review outcomes (Aconex-style A/B/C/D
+  // review status set) — master data, never hard-coded in application code.
+  const workflowOutcomeOptions: { code: string; label: string; severityRank: number; isRejection: boolean }[] = [
+    { code: "A", label: "A - No Objection", severityRank: 1, isRejection: false },
+    { code: "B", label: "B - No Objection With Comments", severityRank: 2, isRejection: false },
+    { code: "C", label: "C - Correction, Revise & Resubmit", severityRank: 3, isRejection: true },
+    { code: "D", label: "D - Rejected", severityRank: 4, isRejection: true },
+  ];
+  for (const opt of workflowOutcomeOptions) {
+    await prisma.workflowOutcomeOption.upsert({
+      where: { projectId_code: { projectId: project.id, code: opt.code } },
+      update: {},
+      create: { projectId: project.id, ...opt, createdById: admin.id },
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // RBAC — real permission catalogue, system roles, and a backfill of every
+  // existing ProjectMember into the equivalent new role assignment. Only
+  // permissions that are actually enforced by real code are seeded here
+  // (Directory/Mailing-Group/RBAC-admin, and — as of this hardening phase —
+  // Documents/Mail/Workflow mutations previously gated only by the legacy
+  // requireProjectRole(["ADMIN","MEMBER"]) check) — no placeholder checkboxes.
+  // ---------------------------------------------------------------------
+  const permissions: { code: string; description: string; category: string }[] = [
+    { code: "DIRECTORY_VIEW", description: "View the project Directory", category: "Directory" },
+    { code: "DIRECTORY_SEARCH", description: "Search the project/global Directory", category: "Directory" },
+    { code: "DIRECTORY_CREATE_USER", description: "Create a new full user account", category: "Directory" },
+    { code: "DIRECTORY_EDIT_USER", description: "Edit a Directory user's details", category: "Directory" },
+    { code: "DIRECTORY_CREATE_GUEST", description: "Create a guest contact", category: "Directory" },
+    { code: "DIRECTORY_INVITE_USER", description: "Invite an existing user onto the project", category: "Directory" },
+    { code: "DIRECTORY_CREATE_GROUP", description: "Create a mailing group", category: "Directory" },
+    { code: "DIRECTORY_EDIT_GROUP", description: "Edit a mailing group's name/lock state", category: "Directory" },
+    { code: "DIRECTORY_MANAGE_GROUP_MEMBERS", description: "Add or remove mailing group members", category: "Directory" },
+    { code: "ADMIN_ROLES", description: "Manage roles and the permission matrix", category: "Administration" },
+    // Documents
+    { code: "DOCUMENT_CREATE", description: "Create documents, placeholders, and register temporary files", category: "Documents" },
+    { code: "DOCUMENT_UPDATE", description: "Edit document metadata, add revisions, bulk-update, and manage metadata options", category: "Documents" },
+    { code: "DOCUMENT_DELETE", description: "Delete documents and temporary files", category: "Documents" },
+    // Mail
+    { code: "MAIL_SEND", description: "Create and send mail, register incoming mail, and issue transmittals", category: "Mail" },
+    { code: "MAIL_CLOSE_OUT", description: "Change a mail's workflow status (Closed-Out / No Action Required)", category: "Mail" },
+    { code: "MAIL_MANAGE_SETTINGS", description: "Manage auto-text, signatures/inline images, and mail type attribute options", category: "Mail" },
+    // Workflows
+    { code: "WORKFLOW_CREATE", description: "Start a workflow on selected documents", category: "Workflows" },
+    { code: "WORKFLOW_TERMINATE", description: "Terminate an in-progress workflow", category: "Workflows" },
+    { code: "WORKFLOW_TEMPLATE_MANAGE", description: "Create workflow templates and change their status", category: "Workflows" },
+  ];
+  const permissionRows = new Map<string, { id: string }>();
+  for (const perm of permissions) {
+    const row = await prisma.permission.upsert({
+      where: { code: perm.code },
+      update: { description: perm.description, category: perm.category },
+      create: perm,
+    });
+    permissionRows.set(perm.code, row);
+  }
+
+  const systemRoles: { name: string; description: string; permissionCodes: string[] }[] = [
+    {
+      name: "Project Administrator",
+      description: "Full Directory and RBAC administration on this project — maps from the legacy ADMIN role.",
+      permissionCodes: permissions.map((p) => p.code),
+    },
+    {
+      name: "Project Member",
+      description:
+        "Can search the Directory, create guest contacts, invite users, and manage Documents/Mail/Workflows — maps from the legacy MEMBER role, which held identical mutation rights to ADMIN on every existing gated route.",
+      permissionCodes: [
+        "DIRECTORY_VIEW",
+        "DIRECTORY_SEARCH",
+        "DIRECTORY_CREATE_GUEST",
+        "DIRECTORY_INVITE_USER",
+        "DOCUMENT_CREATE",
+        "DOCUMENT_UPDATE",
+        "DOCUMENT_DELETE",
+        "MAIL_SEND",
+        "MAIL_CLOSE_OUT",
+        "MAIL_MANAGE_SETTINGS",
+        "WORKFLOW_CREATE",
+        "WORKFLOW_TERMINATE",
+        "WORKFLOW_TEMPLATE_MANAGE",
+      ],
+    },
+    {
+      name: "Project Viewer",
+      description: "Read-only Directory access — maps from the legacy VIEWER role.",
+      permissionCodes: ["DIRECTORY_VIEW", "DIRECTORY_SEARCH"],
+    },
+  ];
+  const roleRows = new Map<string, { id: string }>();
+  for (const roleDef of systemRoles) {
+    const role = await prisma.role.upsert({
+      where: { name_scope: { name: roleDef.name, scope: "PROJECT" } },
+      update: { description: roleDef.description, isSystem: true },
+      create: { name: roleDef.name, description: roleDef.description, scope: "PROJECT", isSystem: true },
+    });
+    roleRows.set(roleDef.name, role);
+    for (const code of roleDef.permissionCodes) {
+      const permission = permissionRows.get(code)!;
+      await prisma.rolePermission.upsert({
+        where: { roleId_permissionId: { roleId: role.id, permissionId: permission.id } },
+        update: {},
+        create: { roleId: role.id, permissionId: permission.id },
+      });
+    }
+  }
+
+  const roleForLegacy: Record<string, string> = {
+    ADMIN: "Project Administrator",
+    MEMBER: "Project Member",
+    VIEWER: "Project Viewer",
+  };
+  const allMembers = await prisma.projectMember.findMany({ select: { userId: true, projectId: true, role: true } });
+  for (const m of allMembers) {
+    const role = roleRows.get(roleForLegacy[m.role]);
+    if (!role) continue;
+    const existing = await prisma.userRoleAssignment.findFirst({
+      where: { userId: m.userId, roleId: role.id, projectId: m.projectId, organizationId: null },
+    });
+    if (!existing) {
+      await prisma.userRoleAssignment.create({ data: { userId: m.userId, roleId: role.id, projectId: m.projectId } });
+    }
+  }
 
   console.log("Seeded:", { org: org.name, admin: admin.email, project: project.name });
+  console.log("RBAC backfill:", { permissions: permissions.length, roles: systemRoles.length, assignments: allMembers.length });
   console.log("Login with admin@shanfari.local / ChangeMe123!");
 }
 

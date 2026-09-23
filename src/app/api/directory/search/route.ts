@@ -41,13 +41,32 @@ export async function GET(request: NextRequest) {
     take: 20,
   });
 
-  return NextResponse.json(
-    members.map((m) => ({
+  // Mailing groups are real, selectable recipients too — resolved into
+  // their real member list by the picker when chosen (see RecipientPicker),
+  // never sent-to as a bare group name.
+  const groups = q
+    ? await prisma.mailingGroup.findMany({
+        where: { projectId, name: { contains: q, mode: "insensitive" } },
+        include: { _count: { select: { members: true } } },
+        orderBy: { name: "asc" },
+        take: 10,
+      })
+    : [];
+
+  return NextResponse.json([
+    ...members.map((m) => ({
+      kind: "user" as const,
       userId: m.userId,
       name: m.user.name,
       email: m.user.email,
       organization: m.organization.name,
       accountType: m.user.accountType,
     })),
-  );
+    ...groups.map((g) => ({
+      kind: "group" as const,
+      groupId: g.id,
+      name: g.name,
+      memberCount: g._count.members,
+    })),
+  ]);
 }

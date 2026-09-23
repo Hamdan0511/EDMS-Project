@@ -29,9 +29,9 @@ export function NavMegaMenu({ item, active }: { item: MenuNavItem; active: boole
       )}
     >
       {(close) => (
-        <div className="flex w-[420px] divide-x divide-border">
+        <div className="flex w-fit divide-x divide-border">
           {item.sections.map((section) => (
-            <div key={section.heading} className="flex-1 px-4 py-3">
+            <div key={section.heading} className="min-w-[150px] px-4 py-3">
               <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-text-muted">
                 {section.heading}
               </h3>

@@ -11,6 +11,10 @@ export type DirectoryPerson = {
   accountType?: "FULL" | "GUEST";
 };
 
+type SearchResult =
+  | ({ kind: "user" } & DirectoryPerson)
+  | { kind: "group"; groupId: string; name: string; memberCount: number };
+
 export function RecipientPicker({
   label,
   projectId,
@@ -39,11 +43,12 @@ export function RecipientPicker({
   allowCreateGuest?: boolean;
 }) {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<DirectoryPerson[]>([]);
+  const [results, setResults] = useState<SearchResult[]>([]);
   const [open, setOpen] = useState(false);
   const [highlighted, setHighlighted] = useState(0);
   const [searched, setSearched] = useState(false);
   const [creatingGuest, setCreatingGuest] = useState(false);
+  const [resolvingGroup, setResolvingGroup] = useState(false);
   const listboxId = useId();
 
   useEffect(() => {
@@ -55,7 +60,10 @@ export function RecipientPicker({
         { signal: controller.signal },
       ).catch(() => null);
       if (res?.ok) {
-        setResults(await res.json());
+        const data: SearchResult[] = await res.json();
+        // A single-identity field (e.g. "Sent From") can't be a mailing
+        // group — filter those out rather than showing a selectable dead end.
+        setResults(multiple ? data : data.filter((r) => r.kind === "user"));
         setHighlighted(0);
         setSearched(true);
       }
@@ -64,7 +72,7 @@ export function RecipientPicker({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [query, projectId, open]);
+  }, [query, projectId, open, multiple]);
 
   function updateQuery(value: string) {
     setQuery(value);
@@ -84,6 +92,34 @@ export function RecipientPicker({
     updateQuery("");
     setResults([]);
     setOpen(false);
+  }
+
+  /** Selecting a mailing group expands it into its real, current members —
+   * never a bare group name sent to nobody. Members already selected are
+   * deduped, and members with no email selection change silently no-ops. */
+  async function addGroup(groupId: string) {
+    setResolvingGroup(true);
+    const res = await fetch(`/api/mailing-groups/${groupId}`).catch(() => null);
+    setResolvingGroup(false);
+    updateQuery("");
+    setResults([]);
+    setOpen(false);
+    if (!res?.ok) return;
+    const data = await res.json();
+    const members: DirectoryPerson[] = data.members.map(
+      (m: { userId: string; name: string; email: string; organization: string; accountType: "FULL" | "GUEST" }) => ({
+        userId: m.userId,
+        name: m.name,
+        email: m.email,
+        organization: m.organization,
+        accountType: m.accountType,
+      }),
+    );
+    const merged = [...selected];
+    for (const m of members) {
+      if (!merged.some((p) => p.userId === m.userId)) merged.push(m);
+    }
+    onChange(merged);
   }
 
   function remove(userId: string) {
@@ -115,8 +151,9 @@ export function RecipientPicker({
       setHighlighted((i) => Math.max(i - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      const person = results[highlighted] ?? results[0];
-      if (person) add(person);
+      const result = results[highlighted] ?? results[0];
+      if (result?.kind === "user") add(result);
+      else if (result?.kind === "group") addGroup(result.groupId);
     }
   }
 
@@ -167,27 +204,49 @@ export function RecipientPicker({
           role="listbox"
           className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto rounded-[3px] border border-border bg-white shadow-lg"
         >
-          {results.map((p, i) => (
-            <button
-              type="button"
-              key={p.userId}
-              role="option"
-              aria-selected={i === highlighted}
-              onMouseDown={() => add(p)}
-              onMouseEnter={() => setHighlighted(i)}
-              className={`flex w-full flex-col items-start px-3 py-2 text-left text-[13px] ${
-                i === highlighted ? "bg-brand-50" : "hover:bg-brand-50"
-              }`}
-            >
-              <span className="font-medium text-text-primary">
-                {p.name}
-                {p.accountType === "GUEST" && <span className="ml-1 text-text-muted">(Guest)</span>}
-              </span>
-              <span className="text-xs text-text-secondary">
-                {p.organization} · {p.email}
-              </span>
-            </button>
-          ))}
+          {results.map((r, i) =>
+            r.kind === "group" ? (
+              <button
+                type="button"
+                key={`g-${r.groupId}`}
+                role="option"
+                aria-selected={i === highlighted}
+                onMouseDown={() => addGroup(r.groupId)}
+                onMouseEnter={() => setHighlighted(i)}
+                disabled={resolvingGroup}
+                className={`flex w-full flex-col items-start px-3 py-2 text-left text-[13px] ${
+                  i === highlighted ? "bg-brand-50" : "hover:bg-brand-50"
+                }`}
+              >
+                <span className="font-medium text-text-primary">
+                  {r.name} <span className="ml-1 text-text-muted">(Group)</span>
+                </span>
+                <span className="text-xs text-text-secondary">
+                  {r.memberCount} member{r.memberCount === 1 ? "" : "s"}
+                </span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                key={r.userId}
+                role="option"
+                aria-selected={i === highlighted}
+                onMouseDown={() => add(r)}
+                onMouseEnter={() => setHighlighted(i)}
+                className={`flex w-full flex-col items-start px-3 py-2 text-left text-[13px] ${
+                  i === highlighted ? "bg-brand-50" : "hover:bg-brand-50"
+                }`}
+              >
+                <span className="font-medium text-text-primary">
+                  {r.name}
+                  {r.accountType === "GUEST" && <span className="ml-1 text-text-muted">(Guest)</span>}
+                </span>
+                <span className="text-xs text-text-secondary">
+                  {r.organization} · {r.email}
+                </span>
+              </button>
+            ),
+          )}
         </div>
       )}
       {showNoResults && (

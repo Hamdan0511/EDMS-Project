@@ -10,9 +10,10 @@ import { buttonClass } from "@/components/ui/button";
 import { NewRevisionButton } from "@/components/documents/new-revision-modal";
 import { EditMetadataButton } from "@/components/documents/edit-metadata-modal";
 import { DeleteDocumentButton } from "@/components/documents/delete-document-button";
-import { ChevronLeft, Download, Printer } from "@/components/ui/icons";
-import { DOCUMENT_STATUS_LABELS, DOCUMENT_STATUS_BADGE_CLASSES } from "@/lib/documents/status";
+import { ChevronLeft, Download, Printer, FileText, Maximize2 } from "@/components/ui/icons";
+import { DOCUMENT_STATUS_LABELS, DOCUMENT_STATUS_BADGE_CLASSES, DOCUMENT_REVIEW_STATUS_LABELS } from "@/lib/documents/status";
 import { formatBytes } from "@/lib/files/file-types";
+import { getDocumentMetadataOptions } from "@/lib/documents/metadata-options";
 
 export default async function DocumentDetailPage({
   params,
@@ -36,16 +37,38 @@ export default async function DocumentDetailPage({
       type: true,
       createdBy: { include: { organization: true } },
       versions: { orderBy: { versionNo: "desc" }, include: { uploadedBy: true } },
+      mailReferences: {
+        include: {
+          mail: {
+            include: {
+              sender: { include: { organization: true } },
+              recipients: { include: { user: { include: { organization: true } } } },
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      },
+      workflowDocuments: { include: { workflow: true }, orderBy: { workflow: { createdAt: "desc" } } },
     },
   });
   if (!document) notFound();
 
   const currentVersion = document.versions[0] ?? null;
   const canManage = membership.role !== "VIEWER";
-  const documentTypes = await prisma.documentType.findMany({
-    where: { projectId: membership.projectId },
-    orderBy: { name: "asc" },
-  });
+  const [documentTypes, disciplineOptions, functionalBreakdownOptions, spatialBreakdownOptions] = await Promise.all([
+    prisma.documentType.findMany({
+      where: { projectId: membership.projectId },
+      orderBy: { name: "asc" },
+    }),
+    getDocumentMetadataOptions(membership.projectId, "DISCIPLINE"),
+    getDocumentMetadataOptions(membership.projectId, "FUNCTIONAL_BREAKDOWN"),
+    getDocumentMetadataOptions(membership.projectId, "SPATIAL_BREAKDOWN"),
+  ]);
+
+  const documentWorkflows = document.workflowDocuments.map((w) => w.workflow);
+  const activeWorkflow = documentWorkflows.find((w) => w.status === "IN_PROGRESS");
+  const latestWorkflow = activeWorkflow ?? documentWorkflows[0] ?? null;
+  const workflowStatusLabel = latestWorkflow ? latestWorkflow.status.replace("_", " ") : "—";
 
   return (
     <div>
@@ -75,7 +98,11 @@ export default async function DocumentDetailPage({
               </a>
             )}
             {canManage && (
-              <NewRevisionButton documentId={document.id} suggestedRevision={nextRevisionGuess(document.currentRevision)} />
+              <NewRevisionButton
+                documentId={document.id}
+                suggestedRevision={document.isPlaceholder ? "R0" : nextRevisionGuess(document.currentRevision)}
+                label={document.isPlaceholder ? "Upload File" : "Create New Revision"}
+              />
             )}
             {canManage && (
               <EditMetadataButton
@@ -84,10 +111,16 @@ export default async function DocumentDetailPage({
                   title: document.title,
                   typeName: document.type?.name ?? "",
                   discipline: document.discipline ?? "",
+                  functionalBreakdown: document.functionalBreakdown ?? "",
+                  spatialBreakdown: document.spatialBreakdown ?? "",
+                  reviewStatus: document.reviewStatus ?? "",
                   status: document.status,
                   description: document.description ?? "",
                 }}
                 documentTypeNames={documentTypes.map((t) => t.name)}
+                disciplineOptions={disciplineOptions}
+                functionalBreakdownOptions={functionalBreakdownOptions}
+                spatialBreakdownOptions={spatialBreakdownOptions}
               />
             )}
             {canManage && <DeleteDocumentButton documentId={document.id} documentNo={document.documentNo} title={document.title} />}
@@ -111,18 +144,59 @@ export default async function DocumentDetailPage({
                 </span>
               }
             />
+            <Row
+              label="Review Status"
+              value={document.reviewStatus ? DOCUMENT_REVIEW_STATUS_LABELS[document.reviewStatus] : "None"}
+            />
             <Row label="Discipline" value={document.discipline ?? "—"} />
+            <Row label="Functional Breakdown" value={document.functionalBreakdown ?? "—"} />
+            <Row label="Spatial Breakdown" value={document.spatialBreakdown ?? "—"} />
             <Row label="Uploaded By" value={document.createdBy.name} />
             <Row label="Organization" value={document.createdBy.organization.name} />
             <Row label="Date Uploaded" value={document.createdAt.toLocaleDateString("en-GB")} />
             <Row label="Date Modified" value={document.updatedAt.toLocaleDateString("en-GB")} />
-            <Row label="Workflow Status" value="—" />
+            <Row
+              label="Workflow Status"
+              value={
+                latestWorkflow ? (
+                  <Link href={`/workflows/${latestWorkflow.id}`} className="text-brand-700 hover:underline">
+                    {workflowStatusLabel}
+                  </Link>
+                ) : (
+                  workflowStatusLabel
+                )
+              }
+            />
+            {document.isPlaceholder && (
+              <Row
+                label="Placeholder"
+                value={
+                  <span className="rounded-[3px] bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                    Awaiting file upload
+                  </span>
+                }
+              />
+            )}
             {document.description && <Row label="Description" value={document.description} full />}
           </div>
 
           {currentVersion && currentVersion.mimeType === "application/pdf" && (
             <>
-              <SectionHeader>Preview</SectionHeader>
+              <SectionHeader
+                actions={
+                  <a
+                    href={`/api/documents/${document.id}/file`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-xs text-brand-700 hover:underline"
+                  >
+                    <Maximize2 size={12} />
+                    View Fullscreen
+                  </a>
+                }
+              >
+                Preview
+              </SectionHeader>
               <div className="p-4">
                 <iframe
                   src={`/api/documents/${document.id}/file`}
@@ -190,6 +264,28 @@ export default async function DocumentDetailPage({
               </Table>
             )}
           </div>
+
+          {document.mailReferences.length > 0 && (
+            <>
+              <SectionHeader>Related Transmittals ({document.mailReferences.length})</SectionHeader>
+              <div className="p-4">
+                <ul className="flex flex-col gap-1.5 text-[13px]">
+                  {document.mailReferences.map((ref) => (
+                    <li key={ref.id} className="flex items-center justify-between">
+                      <Link href={`/mail/${ref.mail.id}`} className="flex items-center gap-1.5 text-brand-700 hover:underline">
+                        <FileText size={13} />
+                        {ref.mail.mailNumber} — {ref.mail.subject}
+                      </Link>
+                      <span className="text-xs text-text-muted">
+                        Rev {ref.revisionAtIssue ?? "—"} ·{" "}
+                        {(ref.mail.sentAt ?? ref.mail.createdAt).toLocaleDateString("en-GB")}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

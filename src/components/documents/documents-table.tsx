@@ -7,14 +7,19 @@ import { Table, Thead, Tbody, Tr, Th, Td } from "@/components/ui/table";
 import { FileText, ImageIcon, File as FileIcon, ArrowUp, ArrowDown, ArrowUpDown } from "@/components/ui/icons";
 import { GenericColumnManager } from "@/components/mail/column-manager";
 import { fileTypeCategory, formatBytes } from "@/lib/files/file-types";
-import { DOCUMENT_STATUS_OPTIONS, DOCUMENT_STATUS_LABELS, DOCUMENT_STATUS_BADGE_CLASSES, DISCIPLINE_OPTIONS } from "@/lib/documents/status";
+import { DOCUMENT_STATUS_OPTIONS, DOCUMENT_STATUS_LABELS, DOCUMENT_STATUS_BADGE_CLASSES, DOCUMENT_REVIEW_STATUS_LABELS } from "@/lib/documents/status";
 import { ALL_COLUMNS, DEFAULT_VISIBLE_COLUMNS, type ColumnKey } from "./document-table-columns";
 import { getSnapshot, setVisibleColumns } from "./document-column-visibility-store";
 import { DocumentRowMenu } from "./document-row-menu";
 import { BulkActionsBar } from "./bulk-actions-bar";
+import { DocumentRegisterToolbar } from "./document-register-toolbar";
+import { RegisterResultsHeader } from "./register-results-header";
+import { useResultSetSelection } from "./use-result-set-selection";
+import { EmptyState } from "@/components/ui/empty-state";
 import type { DocumentMetadataInitial } from "./edit-metadata-modal";
 import type { SortKey } from "@/lib/documents/query";
-import type { DocumentStatus } from "@prisma/client";
+import type { DocumentStatus, DocumentReviewStatus } from "@prisma/client";
+import type { ReactNode } from "react";
 
 export type DocumentRow = {
   id: string;
@@ -23,7 +28,10 @@ export type DocumentRow = {
   revision: string;
   typeLabel: string;
   status: DocumentStatus;
+  reviewStatus: DocumentReviewStatus | null;
   discipline: string | null;
+  functionalBreakdown: string | null;
+  spatialBreakdown: string | null;
   uploadedByName: string;
   organizationName: string;
   dateUploaded: string;
@@ -31,6 +39,7 @@ export type DocumentRow = {
   fileName: string | null;
   mimeType: string | null;
   fileSizeBytes: number | null;
+  isPlaceholder: boolean;
   metadata: DocumentMetadataInitial;
 };
 
@@ -41,6 +50,9 @@ export type DocumentFilterValues = {
   typeId: string;
   status: string;
   discipline: string;
+  functionalBreakdown: string;
+  spatialBreakdown: string;
+  reviewStatus: string;
   uploadedBy: string;
   organizationId: string;
   dateUploadedFrom: string;
@@ -83,7 +95,9 @@ function SortableTh({
 }
 
 export function DocumentsTable({
+  projectId,
   rows,
+  total,
   filters,
   sort,
   dir,
@@ -91,8 +105,19 @@ export function DocumentsTable({
   typeOptions,
   organizationOptions,
   documentTypeNames,
+  disciplineOptions,
+  functionalBreakdownOptions,
+  spatialBreakdownOptions,
+  drawingsOnly,
+  showActivityButton,
+  viewToggle,
+  showInlineFilters = true,
+  emptyTitle = "No documents found",
+  emptyDescription = "Documents registered in this project will appear here. Use Add or Update Documents above, or Split a PDF / Temporary Files → Register as Document.",
 }: {
+  projectId: string;
   rows: DocumentRow[];
+  total?: number;
   filters: DocumentFilterValues;
   sort: SortKey;
   dir: "asc" | "desc";
@@ -100,6 +125,15 @@ export function DocumentsTable({
   typeOptions: { id: string; name: string }[];
   organizationOptions: { id: string; name: string }[];
   documentTypeNames: string[];
+  disciplineOptions: string[];
+  functionalBreakdownOptions: string[];
+  spatialBreakdownOptions: string[];
+  drawingsOnly?: boolean;
+  showActivityButton?: boolean;
+  viewToggle?: ReactNode;
+  showInlineFilters?: boolean;
+  emptyTitle?: string;
+  emptyDescription?: string;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -113,7 +147,11 @@ export function DocumentsTable({
     return `${pathname}?${sp.toString()}`;
   }
 
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const { effectiveIds, isChecked, toggleOne, toggleAllOnPage, selectAll, clear, resolving } = useResultSetSelection({
+    projectId,
+    registerScope: drawingsOnly ? "DRAWING" : "STANDALONE_DOCUMENT",
+    filterQuery: searchParams.toString(),
+  });
 
   const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState<Record<ColumnKey, boolean>>(DEFAULT_VISIBLE_COLUMNS);
@@ -131,18 +169,10 @@ export function DocumentsTable({
   }
 
   const isVisible = (key: ColumnKey) => !mounted || visible[key];
-  const allSelected = rows.length > 0 && selected.size === rows.length;
+  const allSelected = rows.length > 0 && rows.every((r) => isChecked(r.id));
 
   function toggleAll() {
-    setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.id)));
-  }
-  function toggleOne(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    toggleAllOnPage(rows.map((r) => r.id));
   }
 
   const filterInputClass =
@@ -150,13 +180,56 @@ export function DocumentsTable({
 
   return (
     <div>
+      <DocumentRegisterToolbar
+        projectId={projectId}
+        selectedIds={effectiveIds}
+        canManage={canManage}
+        documentTypeNames={documentTypeNames}
+        organizationOptions={organizationOptions}
+        disciplineOptions={disciplineOptions}
+        functionalBreakdownOptions={functionalBreakdownOptions}
+        spatialBreakdownOptions={spatialBreakdownOptions}
+        drawingsOnly={drawingsOnly}
+        showActivityButton={showActivityButton}
+      />
+
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs text-text-secondary" />
-        <GenericColumnManager columns={ALL_COLUMNS} visible={mounted ? visible : DEFAULT_VISIBLE_COLUMNS} onChange={handleColumnChange} />
+        <RegisterResultsHeader
+          total={total ?? rows.length}
+          selectedCount={effectiveIds.length}
+          resolving={resolving}
+          onSelectAll={selectAll}
+        />
+        <div className="flex items-center gap-2">
+          {viewToggle}
+          <GenericColumnManager columns={ALL_COLUMNS} visible={mounted ? visible : DEFAULT_VISIBLE_COLUMNS} onChange={handleColumnChange} />
+        </div>
       </div>
 
-      <BulkActionsBar selectedIds={[...selected]} canManage={canManage} onClear={() => setSelected(new Set())} />
+      <BulkActionsBar selectedIds={effectiveIds} canManage={canManage} onClear={clear} />
 
+      {/* Advanced-Search-only filters have no in-table filter input, so their
+          values are carried across a plain form re-submit via hidden inputs
+          here rather than as raw <tr> children (invalid HTML — it gets
+          foster-parented out during SSR parsing and causes a hydration
+          mismatch). When a caller supplies its own filter panel (e.g. the
+          Drawings register) these are skipped entirely to avoid submitting
+          two same-named inputs in one form. */}
+      {showInlineFilters && (
+        <>
+          <input type="hidden" name="reviewStatus" defaultValue={filters.reviewStatus} />
+          <input type="hidden" name="functionalBreakdown" defaultValue={filters.functionalBreakdown} />
+          <input type="hidden" name="spatialBreakdown" defaultValue={filters.spatialBreakdown} />
+        </>
+      )}
+
+      {rows.length === 0 ? (
+        <EmptyState
+          icon={<FileText size={28} strokeWidth={1.25} />}
+          title={emptyTitle}
+          description={emptyDescription}
+        />
+      ) : (
       <Table>
         <Thead>
           <Tr>
@@ -174,7 +247,10 @@ export function DocumentsTable({
             {isVisible("title") && <SortableTh label="Title" sortKey="title" sort={sort} dir={dir} buildSortHref={buildSortHref} />}
             {isVisible("type") && <SortableTh label="Document Type" sortKey="type" sort={sort} dir={dir} buildSortHref={buildSortHref} />}
             {isVisible("status") && <SortableTh label="Status" sortKey="status" sort={sort} dir={dir} buildSortHref={buildSortHref} />}
+            {isVisible("reviewStatus") && <SortableTh label="Review Status" sortKey="reviewStatus" sort={sort} dir={dir} buildSortHref={buildSortHref} />}
             {isVisible("discipline") && <SortableTh label="Discipline" sortKey="discipline" sort={sort} dir={dir} buildSortHref={buildSortHref} />}
+            {isVisible("functionalBreakdown") && <SortableTh label="Functional Breakdown" sortKey="functionalBreakdown" sort={sort} dir={dir} buildSortHref={buildSortHref} />}
+            {isVisible("spatialBreakdown") && <SortableTh label="Spatial Breakdown" sortKey="spatialBreakdown" sort={sort} dir={dir} buildSortHref={buildSortHref} />}
             {isVisible("uploadedBy") && <SortableTh label="Uploaded By" sortKey="uploadedBy" sort={sort} dir={dir} buildSortHref={buildSortHref} />}
             {isVisible("organization") && <SortableTh label="Organization" sortKey="organization" sort={sort} dir={dir} buildSortHref={buildSortHref} />}
             {isVisible("dateUploaded") && <SortableTh label="Date Uploaded" sortKey="dateUploaded" sort={sort} dir={dir} buildSortHref={buildSortHref} />}
@@ -183,6 +259,7 @@ export function DocumentsTable({
             {isVisible("file") && <Th>File</Th>}
             {isVisible("actions") && <Th>Actions</Th>}
           </Tr>
+          {showInlineFilters && (
           <Tr>
             <Th />
             {isVisible("documentNo") ? (
@@ -224,11 +301,12 @@ export function DocumentsTable({
             ) : (
               <input type="hidden" name="status" defaultValue={filters.status} />
             )}
+            {isVisible("reviewStatus") && <Th />}
             {isVisible("discipline") ? (
               <Th>
                 <select name="discipline" defaultValue={filters.discipline} className={filterInputClass}>
                   <option value="">All</option>
-                  {DISCIPLINE_OPTIONS.map((d) => (
+                  {disciplineOptions.map((d) => (
                     <option key={d} value={d}>{d}</option>
                   ))}
                 </select>
@@ -236,6 +314,8 @@ export function DocumentsTable({
             ) : (
               <input type="hidden" name="discipline" defaultValue={filters.discipline} />
             )}
+            {isVisible("functionalBreakdown") && <Th />}
+            {isVisible("spatialBreakdown") && <Th />}
             {isVisible("uploadedBy") ? (
               <Th><input name="uploadedBy" defaultValue={filters.uploadedBy} className={filterInputClass} /></Th>
             ) : (
@@ -263,6 +343,7 @@ export function DocumentsTable({
             {isVisible("file") && <Th />}
             {isVisible("actions") && <Th />}
           </Tr>
+          )}
         </Thead>
         <Tbody>
           {rows.map((d) => (
@@ -270,7 +351,7 @@ export function DocumentsTable({
               <Td>
                 <input
                   type="checkbox"
-                  checked={selected.has(d.id)}
+                  checked={isChecked(d.id)}
                   onChange={() => toggleOne(d.id)}
                   aria-label={`Select ${d.documentNo}`}
                   className="h-3.5 w-3.5 accent-brand-700"
@@ -299,7 +380,12 @@ export function DocumentsTable({
                   </span>
                 </Td>
               )}
+              {isVisible("reviewStatus") && (
+                <Td className="text-text-secondary">{d.reviewStatus ? DOCUMENT_REVIEW_STATUS_LABELS[d.reviewStatus] : "None"}</Td>
+              )}
               {isVisible("discipline") && <Td className="text-text-secondary">{d.discipline || "—"}</Td>}
+              {isVisible("functionalBreakdown") && <Td className="text-text-secondary">{d.functionalBreakdown || "—"}</Td>}
+              {isVisible("spatialBreakdown") && <Td className="text-text-secondary">{d.spatialBreakdown || "—"}</Td>}
               {isVisible("uploadedBy") && <Td className="text-text-secondary">{d.uploadedByName}</Td>}
               {isVisible("organization") && <Td className="text-text-secondary">{d.organizationName || "—"}</Td>}
               {isVisible("dateUploaded") && <Td className="text-text-secondary">{d.dateUploaded}</Td>}
@@ -322,6 +408,10 @@ export function DocumentsTable({
                         <span className="text-text-muted">({formatBytes(d.fileSizeBytes)})</span>
                       )}
                     </span>
+                  ) : d.isPlaceholder ? (
+                    <span className="rounded-[3px] bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                      Placeholder
+                    </span>
                   ) : (
                     <span className="text-text-muted">—</span>
                   )}
@@ -338,6 +428,9 @@ export function DocumentsTable({
                     canManage={canManage}
                     metadata={d.metadata}
                     documentTypeNames={documentTypeNames}
+                    disciplineOptions={disciplineOptions}
+                    functionalBreakdownOptions={functionalBreakdownOptions}
+                    spatialBreakdownOptions={spatialBreakdownOptions}
                   />
                 </Td>
               )}
@@ -345,6 +438,7 @@ export function DocumentsTable({
           ))}
         </Tbody>
       </Table>
+      )}
     </div>
   );
 }

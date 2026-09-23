@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/session";
 import { assertProjectMember } from "@/lib/project-context";
-import { requireProjectRole, ForbiddenRoleError } from "@/lib/auth/roles";
+import { requirePermission, ForbiddenPermissionError } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import { isDocumentStatus } from "@/lib/documents/status";
@@ -37,16 +37,15 @@ export async function PATCH(request: NextRequest) {
   }
   const projectId = [...projectIds][0];
 
-  let membership;
   try {
-    membership = await assertProjectMember(user, projectId);
+    await assertProjectMember(user, projectId);
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   try {
-    requireProjectRole(membership, ["ADMIN", "MEMBER"]);
+    await requirePermission(user.id, "DOCUMENT_UPDATE", { projectId });
   } catch (err) {
-    if (err instanceof ForbiddenRoleError) {
+    if (err instanceof ForbiddenPermissionError) {
       return NextResponse.json({ error: "Viewers cannot change document status" }, { status: 403 });
     }
     throw err;
