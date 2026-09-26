@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Prisma, MailWorkflowStatus, RecipientType } from "@prisma/client";
+import type { Prisma, PrismaClient, MailWorkflowStatus, RecipientType } from "@prisma/client";
 
 export const MAIL_PAGE_SIZE = 50;
 
@@ -302,4 +302,47 @@ export function buildMailFilters(
 export function parsePage(pageParam: string | undefined): number {
   const n = Number(pageParam);
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
+}
+
+/** The exact same tab + filter + standard-search composition the Mail
+ * register itself uses, extracted so the View Mail page's result
+ * navigation (Previous/Next/position) can rebuild the identical ordered
+ * result set the user was actually looking at — never a broader or
+ * differently-scoped query. `userId`/`organizationId`/`projectId` always
+ * come from the authenticated session, never from client-supplied params,
+ * so this cannot be used to widen a user's own authorization boundary. */
+export async function buildFullMailWhere(
+  params: MailSearchParams,
+  ctx: { projectId: string; userId: string; organizationId: string },
+  prismaClient: PrismaClient,
+): Promise<Prisma.MailWhereInput> {
+  const tab = normalizeTab(params.tab);
+  const stdKey = params.std;
+  const isOrgStd = stdKey === "orgClosedOut" || stdKey === "orgReceived30d";
+
+  const baseWhere: Prisma.MailWhereInput = isOrgStd
+    ? { projectId: ctx.projectId }
+    : tabWhere(tab, ctx.projectId, ctx.userId, params.recipientType);
+  const extraFilters = buildMailFilters(params, ctx.userId);
+  let where: Prisma.MailWhereInput = extraFilters.length > 0 ? { AND: [baseWhere, ...extraFilters] } : baseWhere;
+
+  if (stdKey) {
+    const rfiType =
+      stdKey === "rfiReceived"
+        ? await prismaClient.mailType.findUnique({
+            where: { projectId_name: { projectId: ctx.projectId, name: "Request for Information" } },
+            select: { id: true },
+          })
+        : null;
+    const stdFilter = buildStandardSearchFilter(stdKey, {
+      userId: ctx.userId,
+      organizationId: ctx.organizationId,
+      rfiTypeId: rfiType?.id ?? null,
+    });
+    if (stdFilter) {
+      where = { AND: [where, stdFilter] };
+    }
+  }
+
+  return where;
 }

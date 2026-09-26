@@ -22,6 +22,8 @@ model Organization {
   projectMembers ProjectMember[]
   roleAssignments UserRoleAssignment[]
   mailingGroups   MailingGroup[]
+  hseEquipment    HseEquipment[]
+  hseEmergencyContacts HseEmergencyContact[]
 
   @@index([name])
 }
@@ -93,6 +95,34 @@ model User {
   roleAssignmentsGranted   UserRoleAssignment[]      @relation("UserRoleAssignmentGrantedBy")
   mailingGroupsCreated     MailingGroup[]            @relation("MailingGroupCreatedBy")
   mailingGroupMemberships MailingGroupMember[]
+  hseAttachmentsUploaded       HseAttachment[]
+  hseObservationsReported      HseObservation[]        @relation("HseObservationReportedBy")
+  hseIncidentsReported         HseIncident[]           @relation("HseIncidentReportedBy")
+  hseIncidentPersonLinks       HseIncidentPerson[]
+  hseNearMissesReported        HseNearMiss[]           @relation("HseNearMissReportedBy")
+  hseNearMissesAssigned        HseNearMiss[]           @relation("HseNearMissAssignedTo")
+  hseHazardsResponsible        HseHazard[]             @relation("HseHazardResponsible")
+  hseHazardsCreated            HseHazard[]             @relation("HseHazardCreatedBy")
+  hseControlsOwned             HseControl[]
+  hseRiskAssessmentsResponsible HseRiskAssessment[]     @relation("HseRiskAssessmentResponsible")
+  hseRiskAssessmentsCreated    HseRiskAssessment[]      @relation("HseRiskAssessmentCreatedBy")
+  hseInspectionTemplatesCreated HseInspectionTemplate[]
+  hseInspectionsPerformed      HseInspection[]
+  hseActionsAssigned           HseCorrectiveAction[]    @relation("HseActionAssignedTo")
+  hseActionsVerified           HseCorrectiveAction[]    @relation("HseActionVerifiedBy")
+  hseActionsCreated            HseCorrectiveAction[]    @relation("HseActionCreatedBy")
+  hsePermitsRequested          HsePermit[]
+  hsePermitApprovals           HsePermitApproval[]
+  hseEquipmentResponsible      HseEquipment[]          @relation("HseEquipmentResponsible")
+  hseEquipmentCreated          HseEquipment[]          @relation("HseEquipmentCreatedBy")
+  hseEquipmentInspectionsPerformed HseEquipmentInspection[] @relation("HseEquipmentInspectionInspector")
+  hseEmergencyContactsCreated   HseEmergencyContact[]    @relation("HseEmergencyContactCreatedBy")
+  hseEmergencyProceduresReviewed HseEmergencyProcedure[] @relation("HseEmergencyProcedureReviewedBy")
+  hseEmergencyProceduresCreated HseEmergencyProcedure[]  @relation("HseEmergencyProcedureCreatedBy")
+  hseEmergencyEventsReported    HseEmergencyEvent[]      @relation("HseEmergencyEventReportedBy")
+  hseEmergencyDrillsCoordinated HseEmergencyDrill[]      @relation("HseEmergencyDrillCoordinator")
+  hseEmergencyDrillsCreated     HseEmergencyDrill[]      @relation("HseEmergencyDrillCreatedBy")
+  hseEmergencyDrillAttendances  HseEmergencyDrillAttendee[] @relation("HseEmergencyDrillAttendeeUser")
 
   @@index([organizationId])
 }
@@ -149,6 +179,21 @@ model Project {
   documentMetadataOptions DocumentMetadataOption[]
   roleAssignments         UserRoleAssignment[]
   mailingGroups           MailingGroup[]
+  hseObservations         HseObservation[]
+  hseIncidents            HseIncident[]
+  hseNearMisses           HseNearMiss[]
+  hseHazards              HseHazard[]
+  hseRiskAssessments      HseRiskAssessment[]
+  hseInspectionTemplates  HseInspectionTemplate[]
+  hseInspections          HseInspection[]
+  hseCorrectiveActions    HseCorrectiveAction[]
+  hsePermits              HsePermit[]
+  hseEquipment            HseEquipment[]
+  hseEquipmentInspections HseEquipmentInspection[]
+  hseEmergencyContacts    HseEmergencyContact[]
+  hseEmergencyProcedures  HseEmergencyProcedure[]
+  hseEmergencyEvents      HseEmergencyEvent[]
+  hseEmergencyDrills      HseEmergencyDrill[]
 
   @@index([ownerOrgId])
 }
@@ -1133,4 +1178,788 @@ model MailingGroupMember {
 
   @@unique([groupId, userId])
   @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Health & Safety
+// ---------------------------------------------------------------------------
+
+enum HseSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum HseLikelihood {
+  RARE
+  UNLIKELY
+  POSSIBLE
+  LIKELY
+  ALMOST_CERTAIN
+}
+
+enum HseRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum HseControlHierarchy {
+  ELIMINATION
+  SUBSTITUTION
+  ENGINEERING
+  ADMINISTRATIVE
+  PPE
+}
+
+enum HseControlStatus {
+  PLANNED
+  IN_PROGRESS
+  IMPLEMENTED
+  VERIFIED
+}
+
+/// Generic evidence attachment reused across every HSE record type via a
+/// polymorphic recordType+recordId pair (recordType is the literal model
+/// name, e.g. "HseIncident") — the same pattern this codebase already uses
+/// for AuditLog, rather than seven near-identical join tables.
+model HseAttachment {
+  id           String   @id @default(cuid())
+  recordType   String
+  recordId     String
+  fileName     String
+  storedPath   String
+  mimeType     String
+  sizeBytes    Int
+  uploadedById String
+  uploadedAt   DateTime @default(now())
+
+  uploadedBy User @relation(fields: [uploadedById], references: [id])
+
+  @@index([recordType, recordId])
+}
+
+enum HseObservationType {
+  UNSAFE_ACT
+  UNSAFE_CONDITION
+  POSITIVE_OBSERVATION
+  SAFETY_IMPROVEMENT
+}
+
+enum HseObservationStatus {
+  OPEN
+  IN_PROGRESS
+  CLOSED
+}
+
+model HseObservation {
+  id                String                @id @default(cuid())
+  projectId         String
+  observationNumber String
+  type              HseObservationType
+  title             String
+  description       String
+  location          String
+  building          String?
+  floor             String?
+  area              String?
+  latitude          Float?
+  longitude         Float?
+  severity          HseSeverity           @default(LOW)
+  status            HseObservationStatus  @default(OPEN)
+  reportedById      String
+  reportedAt        DateTime              @default(now())
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  reportedBy User    @relation("HseObservationReportedBy", fields: [reportedById], references: [id])
+
+  @@unique([projectId, observationNumber])
+  @@index([projectId, status])
+}
+
+enum HseIncidentType {
+  INJURY
+  ILLNESS
+  PROPERTY_DAMAGE
+  ENVIRONMENTAL
+  SECURITY
+  OTHER
+}
+
+enum HseIncidentStatus {
+  REPORTED
+  TRIAGED
+  UNDER_INVESTIGATION
+  CORRECTIVE_ACTION
+  VERIFICATION
+  CLOSED
+}
+
+model HseIncident {
+  id                  String            @id @default(cuid())
+  projectId           String
+  incidentNumber      String
+  type                HseIncidentType
+  title               String
+  description         String
+  location            String
+  building            String?
+  floor               String?
+  area                String?
+  latitude            Float?
+  longitude           Float?
+  severity            HseSeverity       @default(LOW)
+  status              HseIncidentStatus @default(REPORTED)
+  incidentDate        DateTime
+  incidentTime        String?
+  immediateCause      String?
+  contributingFactors String?
+  rootCause           String?
+  reportedById        String
+  reportedAt          DateTime          @default(now())
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  project    Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  reportedBy User                @relation("HseIncidentReportedBy", fields: [reportedById], references: [id])
+  people     HseIncidentPerson[]
+
+  @@unique([projectId, incidentNumber])
+  @@index([projectId, status])
+}
+
+model HseIncidentPerson {
+  id           String  @id @default(cuid())
+  incidentId   String
+  userId       String?
+  name         String
+  role         String
+  organization String?
+
+  incident HseIncident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  user     User?       @relation(fields: [userId], references: [id])
+
+  @@index([incidentId])
+}
+
+enum HseNearMissStatus {
+  OPEN
+  IN_PROGRESS
+  CLOSED
+}
+
+model HseNearMiss {
+  id                   String            @id @default(cuid())
+  projectId            String
+  nearMissNumber       String
+  title                String
+  description          String
+  whatHappened         String?
+  potentialConsequence String?
+  potentialSeverity    HseSeverity       @default(LOW)
+  immediateAction      String?
+  location             String
+  building             String?
+  floor                String?
+  area                 String?
+  latitude             Float?
+  longitude            Float?
+  status               HseNearMissStatus @default(OPEN)
+  assignedToId         String?
+  dueDate              DateTime?
+  reportedById         String
+  reportedAt           DateTime          @default(now())
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  reportedBy User    @relation("HseNearMissReportedBy", fields: [reportedById], references: [id])
+  assignedTo User?   @relation("HseNearMissAssignedTo", fields: [assignedToId], references: [id])
+
+  @@unique([projectId, nearMissNumber])
+  @@index([projectId, status])
+}
+
+enum HseHazardStatus {
+  OPEN
+  CONTROLLED
+  CLOSED
+}
+
+model HseHazard {
+  id                 String          @id @default(cuid())
+  projectId          String
+  hazardNumber       String
+  hazard             String
+  activity           String?
+  location           String
+  initialLikelihood  HseLikelihood
+  initialSeverity    HseSeverity
+  initialRisk        HseRiskLevel
+  residualLikelihood HseLikelihood?
+  residualSeverity   HseSeverity?
+  residualRisk       HseRiskLevel?
+  responsibleId      String?
+  reviewDate         DateTime?
+  status             HseHazardStatus @default(OPEN)
+  createdById        String
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  responsible User?        @relation("HseHazardResponsible", fields: [responsibleId], references: [id])
+  createdBy   User         @relation("HseHazardCreatedBy", fields: [createdById], references: [id])
+  controls    HseControl[]
+
+  @@unique([projectId, hazardNumber])
+  @@index([projectId, status])
+}
+
+enum HseRiskAssessmentStatus {
+  DRAFT
+  ACTIVE
+  UNDER_REVIEW
+  ARCHIVED
+}
+
+model HseRiskAssessment {
+  id                   String                  @id @default(cuid())
+  projectId            String
+  assessmentNumber     String
+  activity             String
+  task                 String?
+  hazard               String
+  potentialConsequence String?
+  initialLikelihood    HseLikelihood
+  initialSeverity      HseSeverity
+  initialRisk          HseRiskLevel
+  residualLikelihood   HseLikelihood?
+  residualSeverity     HseSeverity?
+  residualRisk         HseRiskLevel?
+  responsibleId        String?
+  reviewDate           DateTime?
+  status               HseRiskAssessmentStatus @default(DRAFT)
+  createdById          String
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  responsible User?        @relation("HseRiskAssessmentResponsible", fields: [responsibleId], references: [id])
+  createdBy   User         @relation("HseRiskAssessmentCreatedBy", fields: [createdById], references: [id])
+  controls    HseControl[]
+
+  @@unique([projectId, assessmentNumber])
+  @@index([projectId, status])
+}
+
+/// Shared by both Hazards and Risk Assessments — a control belongs to
+/// exactly one of the two (never both), matching the hierarchy-of-controls
+/// concept used in both registers.
+model HseControl {
+  id               String               @id @default(cuid())
+  hazardId         String?
+  riskAssessmentId String?
+  hierarchy        HseControlHierarchy
+  description      String
+  ownerId          String?
+  dueDate          DateTime?
+  status           HseControlStatus     @default(PLANNED)
+  verifiedAt       DateTime?
+
+  hazard         HseHazard?         @relation(fields: [hazardId], references: [id], onDelete: Cascade)
+  riskAssessment HseRiskAssessment? @relation(fields: [riskAssessmentId], references: [id], onDelete: Cascade)
+  owner          User?              @relation(fields: [ownerId], references: [id])
+
+  @@index([hazardId])
+  @@index([riskAssessmentId])
+}
+
+enum HseInspectionQuestionType {
+  YES_NO
+  PASS_FAIL
+  TEXT
+  NUMERIC
+  PHOTO
+}
+
+model HseInspectionTemplate {
+  id          String   @id @default(cuid())
+  projectId   String
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  createdById String
+  createdAt   DateTime @default(now())
+
+  project     Project                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy   User                     @relation(fields: [createdById], references: [id])
+  questions   HseInspectionQuestion[]
+  inspections HseInspection[]
+
+  @@unique([projectId, name])
+}
+
+model HseInspectionQuestion {
+  id         String                    @id @default(cuid())
+  templateId String
+  sortOrder  Int
+  section    String?
+  text       String
+  type       HseInspectionQuestionType
+  required   Boolean                   @default(true)
+
+  template  HseInspectionTemplate    @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  responses HseInspectionResponse[]
+
+  @@index([templateId, sortOrder])
+}
+
+enum HseInspectionStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+}
+
+model HseInspection {
+  id               String               @id @default(cuid())
+  projectId        String
+  inspectionNumber String
+  templateId       String
+  location         String
+  inspectorId      String
+  scheduledAt      DateTime?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  status           HseInspectionStatus  @default(SCHEDULED)
+  result           String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  project   Project                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  template  HseInspectionTemplate    @relation(fields: [templateId], references: [id])
+  inspector User                     @relation(fields: [inspectorId], references: [id])
+  responses HseInspectionResponse[]
+
+  @@unique([projectId, inspectionNumber])
+  @@index([projectId, status])
+}
+
+model HseInspectionResponse {
+  id           String  @id @default(cuid())
+  inspectionId String
+  questionId   String
+  answer       String?
+  comment      String?
+
+  inspection HseInspection          @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  question   HseInspectionQuestion  @relation(fields: [questionId], references: [id])
+
+  @@unique([inspectionId, questionId])
+}
+
+enum HseActionPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum HseCorrectiveActionStatus {
+  OPEN
+  IN_PROGRESS
+  PENDING_VERIFICATION
+  VERIFIED
+  CLOSED
+}
+
+model HseCorrectiveAction {
+  id           String                    @id @default(cuid())
+  projectId    String
+  actionNumber String
+  sourceType   String
+  sourceId     String?
+  description  String
+  assignedToId String?
+  priority     HseActionPriority         @default(MEDIUM)
+  dueDate      DateTime?
+  status       HseCorrectiveActionStatus @default(OPEN)
+  completedAt  DateTime?
+  verifiedById String?
+  verifiedAt   DateTime?
+  createdById  String
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assignedTo User?   @relation("HseActionAssignedTo", fields: [assignedToId], references: [id])
+  verifiedBy User?   @relation("HseActionVerifiedBy", fields: [verifiedById], references: [id])
+  createdBy  User    @relation("HseActionCreatedBy", fields: [createdById], references: [id])
+
+  @@unique([projectId, actionNumber])
+  @@index([projectId, status])
+  @@index([assignedToId])
+  @@index([sourceType, sourceId])
+}
+
+enum HsePermitType {
+  HOT_WORK
+  WORK_AT_HEIGHT
+  ELECTRICAL
+  CONFINED_SPACE
+  OTHER
+}
+
+enum HsePermitStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  ACTIVE
+  REJECTED
+  SUSPENDED
+  EXPIRED
+  CLOSED
+}
+
+model HsePermit {
+  id              String          @id @default(cuid())
+  projectId       String
+  permitNumber    String
+  type            HsePermitType
+  location        String
+  workDescription String
+  contractorOrg   String?
+  requestedById   String
+  startDate       DateTime
+  endDate         DateTime
+  hazards         String?
+  controls        String?
+  requiredPpe     String?
+  precautions     String?
+  status          HsePermitStatus @default(DRAFT)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  project     Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requestedBy User                 @relation(fields: [requestedById], references: [id])
+  approvals   HsePermitApproval[]
+
+  @@unique([projectId, permitNumber])
+  @@index([projectId, status])
+}
+
+model HsePermitApproval {
+  id         String    @id @default(cuid())
+  permitId   String
+  approverId String
+  decision   String?
+  comment    String?
+  decidedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  permit   HsePermit @relation(fields: [permitId], references: [id], onDelete: Cascade)
+  approver User      @relation(fields: [approverId], references: [id])
+
+  @@index([permitId])
+}
+
+// ---------------------------------------------------------------------------
+// HSE — Equipment / Plant Safety
+//
+// Distinct from HseInspection (which inspects a site/activity/location):
+// this determines whether a specific piece of equipment/plant is safe to
+// operate. Reuses HseAttachment (recordType "HseEquipment"/
+// "HseEquipmentInspection"), HseCorrectiveAction (sourceType
+// "HseEquipmentInspection"), AuditLog, and HSE numbering — no duplicate
+// infrastructure. equipmentType is validated free text (see
+// src/lib/hse/equipment.ts), not an enum, so new equipment categories never
+// require a migration.
+// ---------------------------------------------------------------------------
+
+enum HseEquipmentStatus {
+  AVAILABLE
+  INSPECTION_DUE
+  UNDER_INSPECTION
+  PASSED
+  FAILED
+  OUT_OF_SERVICE
+  UNDER_REPAIR
+  RELEASED
+}
+
+model HseEquipment {
+  id                  String             @id @default(cuid())
+  projectId           String
+  equipmentNumber     String
+  equipmentType       String
+  description         String
+  makeModel           String?
+  serialNumber        String?
+  location            String?
+  organizationId      String?
+  responsiblePersonId String?
+  status              HseEquipmentStatus @default(AVAILABLE)
+  riskLevel           HseRiskLevel?
+  lastInspectionAt    DateTime?
+  nextInspectionDue   DateTime?
+  createdById         String
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  project           Project                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  organization      Organization?            @relation(fields: [organizationId], references: [id])
+  responsiblePerson User?                    @relation("HseEquipmentResponsible", fields: [responsiblePersonId], references: [id])
+  createdBy         User                     @relation("HseEquipmentCreatedBy", fields: [createdById], references: [id])
+  inspections       HseEquipmentInspection[]
+
+  @@unique([projectId, equipmentNumber])
+  @@index([projectId, status])
+}
+
+enum HseEquipmentInspectionResult {
+  PASS
+  FAIL
+}
+
+model HseEquipmentInspection {
+  id                   String                       @id @default(cuid())
+  projectId            String
+  equipmentId          String
+  inspectionNumber     String
+  inspectorId          String
+  inspectedAt          DateTime                     @default(now())
+  result               HseEquipmentInspectionResult
+  previousInspectionId String?
+  createdAt            DateTime                     @default(now())
+
+  project            Project                      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  equipment          HseEquipment                 @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  inspector          User                         @relation("HseEquipmentInspectionInspector", fields: [inspectorId], references: [id])
+  previousInspection HseEquipmentInspection?      @relation("HseEquipmentReinspection", fields: [previousInspectionId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reinspections      HseEquipmentInspection[]     @relation("HseEquipmentReinspection")
+  items              HseEquipmentInspectionItem[]
+
+  @@unique([projectId, inspectionNumber])
+  @@index([equipmentId])
+}
+
+enum HseChecklistResult {
+  PASS
+  FAIL
+  NOT_APPLICABLE
+}
+
+model HseEquipmentInspectionItem {
+  id           String             @id @default(cuid())
+  inspectionId String
+  label        String
+  result       HseChecklistResult
+  comment      String?
+  severity     HseSeverity?
+  sortOrder    Int                @default(0)
+
+  inspection HseEquipmentInspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+
+  @@index([inspectionId])
+}
+
+// ---------------------------------------------------------------------------
+// HSE — Emergency Management
+//
+// A practical construction-site emergency management area: contacts,
+// procedures, real emergency events, and drills with attendance/findings.
+// Findings reuse HseCorrectiveAction (sourceType "HseEmergencyDrillFinding")
+// rather than a parallel action system; evidence reuses HseAttachment.
+// ---------------------------------------------------------------------------
+
+model HseEmergencyContact {
+  id             String   @id @default(cuid())
+  projectId      String
+  name           String
+  role           String
+  organizationId String?
+  phone          String
+  email          String?
+  emergencyType  String?
+  location       String?
+  availability   String?
+  notes          String?
+  createdById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  createdBy    User          @relation("HseEmergencyContactCreatedBy", fields: [createdById], references: [id])
+
+  @@index([projectId])
+}
+
+enum HseEmergencyProcedureStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+model HseEmergencyProcedure {
+  id                     String                      @id @default(cuid())
+  projectId              String
+  title                  String
+  emergencyType          String
+  immediateActions       String
+  evacuationInstructions String?
+  assemblyPoint          String?
+  requiredEquipment      String?
+  steps                  String?
+  status                 HseEmergencyProcedureStatus @default(DRAFT)
+  lastReviewedAt         DateTime?
+  reviewedById           String?
+  createdById            String
+  createdAt              DateTime                    @default(now())
+  updatedAt              DateTime                    @updatedAt
+
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  reviewedBy User?   @relation("HseEmergencyProcedureReviewedBy", fields: [reviewedById], references: [id])
+  createdBy  User    @relation("HseEmergencyProcedureCreatedBy", fields: [createdById], references: [id])
+
+  @@index([projectId, status])
+}
+
+enum HseEmergencyEventStatus {
+  REPORTED
+  RESPONDING
+  UNDER_REVIEW
+  FOLLOW_UP
+  CLOSED
+}
+
+model HseEmergencyEvent {
+  id                        String                   @id @default(cuid())
+  projectId                 String
+  eventNumber               String
+  emergencyType             String
+  occurredAt                DateTime
+  location                  String
+  reportedById              String
+  severity                  HseSeverity
+  description               String
+  immediateActions          String?
+  peopleAffected            String?
+  emergencyServicesContacted Boolean                 @default(false)
+  evacuationRequired        Boolean                  @default(false)
+  assemblyPoint             String?
+  status                    HseEmergencyEventStatus  @default(REPORTED)
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
+
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  reportedBy User    @relation("HseEmergencyEventReportedBy", fields: [reportedById], references: [id])
+
+  @@unique([projectId, eventNumber])
+  @@index([projectId, status])
+}
+
+enum HseEmergencyDrillResult {
+  SATISFACTORY
+  NEEDS_IMPROVEMENT
+  UNSATISFACTORY
+}
+
+enum HseEmergencyDrillStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+}
+
+model HseEmergencyDrill {
+  id                   String                    @id @default(cuid())
+  projectId            String
+  drillNumber          String
+  drillType            String
+  scheduledAt          DateTime
+  location             String
+  scenario             String?
+  coordinatorId        String
+  expectedParticipants Int?
+  actualParticipants   Int?
+  assemblyPoint        String?
+  startedAt            DateTime?
+  endedAt              DateTime?
+  observations         String?
+  result               HseEmergencyDrillResult?
+  status               HseEmergencyDrillStatus   @default(SCHEDULED)
+  createdById          String
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
+
+  project     Project                     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  coordinator User                        @relation("HseEmergencyDrillCoordinator", fields: [coordinatorId], references: [id])
+  createdBy   User                        @relation("HseEmergencyDrillCreatedBy", fields: [createdById], references: [id])
+  attendees   HseEmergencyDrillAttendee[]
+  findings    HseEmergencyDrillFinding[]
+
+  @@unique([projectId, drillNumber])
+  @@index([projectId, status])
+}
+
+model HseEmergencyDrillAttendee {
+  id               String  @id @default(cuid())
+  drillId          String
+  userId           String?
+  organizationName String?
+  present          Boolean @default(true)
+  role             String?
+
+  drill HseEmergencyDrill @relation(fields: [drillId], references: [id], onDelete: Cascade)
+  user  User?             @relation("HseEmergencyDrillAttendeeUser", fields: [userId], references: [id])
+
+  @@index([drillId])
+}
+
+model HseEmergencyDrillFinding {
+  id       String      @id @default(cuid())
+  drillId  String
+  issue    String
+  severity HseSeverity
+  finding  String
+
+  drill HseEmergencyDrill @relation(fields: [drillId], references: [id], onDelete: Cascade)
+
+  @@index([drillId])
+}
+
+// ---------------------------------------------------------------------------
+// Public marketing site — unauthenticated contact/enquiry submissions.
+// Deliberately outside the RBAC/project model: these come from anonymous
+// visitors on the public website, not application users.
+// ---------------------------------------------------------------------------
+
+enum ContactEnquiryType {
+  GENERAL
+  PROJECT
+  INTERIOR_DESIGN
+  FURNITURE
+  FIT_OUT
+  EXHIBITION
+  DIGITAL_PLATFORM
+  HSE_SAFETY
+  QUALITY_COMPLIANCE
+}
+
+model ContactEnquiry {
+  id             String             @id @default(cuid())
+  name           String
+  company        String?
+  email          String
+  enquiryType    ContactEnquiryType
+  projectArea    String?
+  message        String
+  attachmentPath String?
+  createdAt      DateTime           @default(now())
+
+  @@index([createdAt])
 }

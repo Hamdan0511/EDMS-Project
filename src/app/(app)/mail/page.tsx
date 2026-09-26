@@ -10,18 +10,17 @@ import { MailFilters } from "@/components/mail/mail-filters";
 import { MailTable, type MailRow } from "@/components/mail/mail-table";
 import { AdvancedSearchModal } from "@/components/mail/advanced-search-modal";
 import Link from "next/link";
-import type { Prisma } from "@prisma/client";
 import {
   normalizeTab,
   tabWhere,
-  buildMailFilters,
-  buildStandardSearchFilter,
+  buildFullMailWhere,
   parsePage,
   MAIL_PAGE_SIZE,
   type MailSearchParams,
 } from "@/lib/mail/query";
 import { WORKFLOW_STATUS_OPTIONS, WORKFLOW_STATUS_LABELS } from "@/lib/mail/workflow-status";
 import { effectiveWorkflowStatus } from "@/lib/mail/overdue";
+import { hasPermission } from "@/lib/auth/permissions";
 
 export default async function MailListPage({
   searchParams,
@@ -42,41 +41,15 @@ export default async function MailListPage({
   const projectId = membership.projectId;
   const tab = normalizeTab(params.tab);
   const page = parsePage(params.page);
-
   const stdKey = params.std;
-  // "Org" standard searches show correspondence across the whole
-  // organization (any teammate as sender/recipient), not just mail
-  // addressed to me — so they must not inherit tabWhere's per-user
-  // authorization scope, only the org-membership scope baked into the
-  // standard search filter itself.
-  const isOrgStd = stdKey === "orgClosedOut" || stdKey === "orgReceived30d";
 
-  const baseWhere: Prisma.MailWhereInput = isOrgStd
-    ? { projectId }
-    : tabWhere(tab, projectId, user.id, params.recipientType);
-  const extraFilters = buildMailFilters(params, user.id);
-  let where: Prisma.MailWhereInput =
-    extraFilters.length > 0 ? { AND: [baseWhere, ...extraFilters] } : baseWhere;
+  const where = await buildFullMailWhere(
+    params,
+    { projectId, userId: user.id, organizationId: membership.organizationId },
+    prisma,
+  );
 
-  if (stdKey) {
-    const rfiType =
-      stdKey === "rfiReceived"
-        ? await prisma.mailType.findUnique({
-            where: { projectId_name: { projectId, name: "Request for Information" } },
-            select: { id: true },
-          })
-        : null;
-    const stdFilter = buildStandardSearchFilter(stdKey, {
-      userId: user.id,
-      organizationId: membership.organizationId,
-      rfiTypeId: rfiType?.id ?? null,
-    });
-    if (stdFilter) {
-      where = { AND: [where, stdFilter] };
-    }
-  }
-
-  const [mails, total, allCount, inboxCount, sentCount, draftsCount, mailTypes] = await Promise.all([
+  const [mails, total, allCount, inboxCount, sentCount, draftsCount, mailTypes, canExport] = await Promise.all([
     prisma.mail.findMany({
       where,
       include: {
@@ -86,7 +59,13 @@ export default async function MailListPage({
         replies: { select: { sentAt: true, createdAt: true }, orderBy: { createdAt: "desc" }, take: 1 },
         _count: { select: { attachments: true, replies: true } },
       },
-      orderBy: { createdAt: "desc" },
+      // A secondary tiebreaker is required, not cosmetic: many imported
+      // historical mails share the exact same createdAt timestamp, and
+      // Postgres does not guarantee stable ordering among ties across
+      // separate queries with only one sort key — without `id` as a
+      // tiebreaker, two consecutive page requests can return overlapping or
+      // skipped rows, corrupting pagination and cross-page selection.
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       skip: (page - 1) * MAIL_PAGE_SIZE,
       take: MAIL_PAGE_SIZE,
     }),
@@ -96,6 +75,7 @@ export default async function MailListPage({
     prisma.mail.count({ where: tabWhere("sent", projectId, user.id) }),
     prisma.mail.count({ where: tabWhere("drafts", projectId, user.id) }),
     prisma.mailType.findMany({ where: { projectId }, orderBy: { name: "asc" } }),
+    hasPermission(user.id, "MAIL_EXPORT", { projectId }),
   ]);
 
   const rows: MailRow[] = mails.map((m) => {
@@ -115,7 +95,9 @@ export default async function MailListPage({
               : m.type.name === "Tender Transmittal"
                 ? `/documents/transmittals/new?kind=tender&draftId=${m.id}`
                 : `/mail/new?draftId=${m.id}`
-          : `/mail/${m.id}`,
+          // The return context lets View Mail rebuild this exact result set
+          // for Previous/Next navigation and a context-preserving Back link.
+          : `/mail/${m.id}?return=${encodeURIComponent(buildHref(page).slice("/mail?".length))}`,
       mailNumber: m.mailNumber,
       subject: m.subject,
       date: (m.sentAt ?? m.createdAt).toLocaleDateString("en-GB"),
@@ -209,6 +191,29 @@ export default async function MailListPage({
             <>
               <MailTable
                 rows={rows}
+                total={total}
+                projectId={projectId}
+                canExport={canExport}
+                queryParams={{
+                  tab,
+                  q: params.q,
+                  myMailOnly: params.myMailOnly,
+                  myUnread: params.myUnread,
+                  recipientType: params.recipientType,
+                  mailNo: params.mailNo,
+                  subject: params.subject,
+                  from: params.from,
+                  fromOrg: params.fromOrg,
+                  toOrg: params.toOrg,
+                  recipients: params.recipients,
+                  status: params.status,
+                  type: params.type,
+                  dateField: params.dateField,
+                  dateFrom: params.dateFrom,
+                  dateTo: params.dateTo,
+                  dateQueries: params.dateQueries,
+                  std: params.std,
+                }}
                 filters={{
                   mailNo: params.mailNo ?? "",
                   subject: params.subject ?? "",

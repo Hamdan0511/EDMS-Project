@@ -2,8 +2,9 @@
 
 import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
+
+const fieldClass =
+  "w-full border border-border-strong bg-white px-4 py-3 text-[14px] text-text-primary outline-none placeholder:text-text-muted focus:border-brand-500";
 
 export function LoginForm() {
   const router = useRouter();
@@ -26,7 +27,7 @@ export function LoginForm() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data.error ?? "Sign in failed");
+        setError(data.error ?? "Sign in failed. Please try again.");
         setSubmitting(false);
         return;
       }
@@ -34,41 +35,50 @@ export function LoginForm() {
       router.push("/home");
       router.refresh();
     } catch {
-      setError("Network error — please try again");
+      setError("Network error — please try again.");
       setSubmitting(false);
     }
   }
 
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-4">
+    <form onSubmit={onSubmit} className="flex flex-col gap-5">
       {error && (
-        <div className="rounded-[3px] border border-danger/30 bg-red-50 px-3 py-2 text-xs text-danger">
+        <div className="border border-danger/30 bg-red-50 px-4 py-3 text-[13px] text-danger" role="alert">
           {error}
         </div>
       )}
-      <label className="flex flex-col gap-1 text-xs font-medium text-text-secondary">
+      <label className="flex flex-col gap-2 text-[12px] font-medium uppercase tracking-wide text-text-muted">
         Email
-        <Input
+        <input
           type="email"
           required
+          autoFocus
+          autoComplete="username"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          autoComplete="username"
+          className={fieldClass}
+          placeholder="you@shanfarifurnishing.com"
         />
       </label>
-      <label className="flex flex-col gap-1 text-xs font-medium text-text-secondary">
+      <label className="flex flex-col gap-2 text-[12px] font-medium uppercase tracking-wide text-text-muted">
         Password
-        <Input
+        <input
           type="password"
           required
+          autoComplete="current-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          autoComplete="current-password"
+          className={fieldClass}
+          placeholder="••••••••"
         />
       </label>
-      <Button type="submit" variant="primary" disabled={submitting} className="mt-2 h-9 w-full">
-        {submitting ? "Signing in..." : "Sign in"}
-      </Button>
+      <button
+        type="submit"
+        disabled={submitting}
+        className="mt-2 bg-brand-900 px-6 py-3.5 text-[13px] font-medium tracking-wide text-white transition-colors hover:bg-brand-800 disabled:opacity-60"
+      >
+        {submitting ? "Signing in…" : "Sign In →"}
+      </button>
     </form>
   );
 }

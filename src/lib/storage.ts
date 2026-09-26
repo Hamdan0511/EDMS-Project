@@ -13,7 +13,7 @@ const STORAGE_ROOT = path.join(process.cwd(), "storage");
  * object-storage backend (S3/R2) only requires reimplementing this module.
  */
 export async function saveUploadedFile(
-  namespace: "mail" | "documents" | "temporary-files" | "mail-inline-images",
+  namespace: "mail" | "documents" | "temporary-files" | "mail-inline-images" | "hse" | "contact",
   file: File,
 ): Promise<{ storedPath: string; sizeBytes: number }> {
   const buffer = Buffer.from(await file.arrayBuffer());

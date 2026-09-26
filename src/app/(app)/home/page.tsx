@@ -34,7 +34,7 @@ export default async function HomePage() {
     <HeroPanel>
       <div>
         <p className="text-sm text-text-secondary">Welcome to</p>
-        <h1 className="text-4xl font-semibold tracking-tight text-text-primary">Shanfari EDMS</h1>
+        <h1 className="text-4xl font-semibold tracking-tight text-text-primary">Shanfari Furnishing</h1>
         <p className="mt-4 text-xl font-medium text-text-primary">{membership.project.shortName}</p>
         <p className="text-sm text-text-secondary">{membership.project.name}</p>
       </div>

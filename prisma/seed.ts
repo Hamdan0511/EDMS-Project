@@ -170,10 +170,25 @@ async function main() {
     { code: "MAIL_SEND", description: "Create and send mail, register incoming mail, and issue transmittals", category: "Mail" },
     { code: "MAIL_CLOSE_OUT", description: "Change a mail's workflow status (Closed-Out / No Action Required)", category: "Mail" },
     { code: "MAIL_MANAGE_SETTINGS", description: "Manage auto-text, signatures/inline images, and mail type attribute options", category: "Mail" },
+    { code: "MAIL_EXPORT", description: "Export the Mail register to Excel", category: "Mail" },
     // Workflows
     { code: "WORKFLOW_CREATE", description: "Start a workflow on selected documents", category: "Workflows" },
     { code: "WORKFLOW_TERMINATE", description: "Terminate an in-progress workflow", category: "Workflows" },
     { code: "WORKFLOW_TEMPLATE_MANAGE", description: "Create workflow templates and change their status", category: "Workflows" },
+    // Health & Safety
+    { code: "HSE_VIEW", description: "View Health & Safety registers and the dashboard", category: "Health & Safety" },
+    { code: "HSE_REPORT", description: "Report a hazard, incident, near miss, or observation", category: "Health & Safety" },
+    { code: "HSE_MANAGE_OBSERVATIONS", description: "Edit and close observations", category: "Health & Safety" },
+    { code: "HSE_MANAGE_INCIDENTS", description: "Manage incident investigation and status", category: "Health & Safety" },
+    { code: "HSE_MANAGE_NEAR_MISSES", description: "Manage near misses", category: "Health & Safety" },
+    { code: "HSE_MANAGE_HAZARDS", description: "Manage the hazard register and controls", category: "Health & Safety" },
+    { code: "HSE_MANAGE_RISK_ASSESSMENTS", description: "Create and manage risk assessments", category: "Health & Safety" },
+    { code: "HSE_MANAGE_INSPECTIONS", description: "Schedule and complete inspections", category: "Health & Safety" },
+    { code: "HSE_MANAGE_ACTIONS", description: "Assign, update, and verify corrective actions", category: "Health & Safety" },
+    { code: "HSE_MANAGE_PERMITS", description: "Create, approve, and manage permits to work", category: "Health & Safety" },
+    { code: "HSE_EXPORT_REPORTS", description: "Export Health & Safety reports", category: "Health & Safety" },
+    { code: "HSE_MANAGE_EQUIPMENT", description: "Manage the equipment register, perform inspections, and reinspect out-of-service equipment", category: "Health & Safety" },
+    { code: "HSE_MANAGE_EMERGENCY", description: "Manage emergency contacts, procedures, events, and drills", category: "Health & Safety" },
   ];
   const permissionRows = new Map<string, { id: string }>();
   for (const perm of permissions) {
@@ -206,15 +221,29 @@ async function main() {
         "MAIL_SEND",
         "MAIL_CLOSE_OUT",
         "MAIL_MANAGE_SETTINGS",
+        "MAIL_EXPORT",
         "WORKFLOW_CREATE",
         "WORKFLOW_TERMINATE",
         "WORKFLOW_TEMPLATE_MANAGE",
+        "HSE_VIEW",
+        "HSE_REPORT",
+        "HSE_MANAGE_OBSERVATIONS",
+        "HSE_MANAGE_INCIDENTS",
+        "HSE_MANAGE_NEAR_MISSES",
+        "HSE_MANAGE_HAZARDS",
+        "HSE_MANAGE_RISK_ASSESSMENTS",
+        "HSE_MANAGE_INSPECTIONS",
+        "HSE_MANAGE_ACTIONS",
+        "HSE_MANAGE_PERMITS",
+        "HSE_EXPORT_REPORTS",
+        "HSE_MANAGE_EQUIPMENT",
+        "HSE_MANAGE_EMERGENCY",
       ],
     },
     {
       name: "Project Viewer",
       description: "Read-only Directory access — maps from the legacy VIEWER role.",
-      permissionCodes: ["DIRECTORY_VIEW", "DIRECTORY_SEARCH"],
+      permissionCodes: ["DIRECTORY_VIEW", "DIRECTORY_SEARCH", "HSE_VIEW"],
     },
   ];
   const roleRows = new Map<string, { id: string }>();
@@ -249,6 +278,39 @@ async function main() {
     });
     if (!existing) {
       await prisma.userRoleAssignment.create({ data: { userId: m.userId, roleId: role.id, projectId: m.projectId } });
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // A real, usable starting Inspection template — reference configuration
+  // (like the MailType/DocumentType bootstrap above), not business data.
+  // ---------------------------------------------------------------------
+  const inspectionTemplate = await prisma.hseInspectionTemplate.upsert({
+    where: { projectId_name: { projectId: project.id, name: "General Site Safety Inspection" } },
+    update: {},
+    create: {
+      projectId: project.id,
+      name: "General Site Safety Inspection",
+      description: "A general-purpose walkthrough checklist covering housekeeping, PPE, and access.",
+      createdById: admin.id,
+    },
+  });
+  const inspectionQuestions: { section: string; text: string; type: "YES_NO" | "PASS_FAIL" | "TEXT"; sortOrder: number }[] = [
+    { section: "Housekeeping", text: "Are walkways and access routes clear of obstructions?", type: "YES_NO", sortOrder: 1 },
+    { section: "Housekeeping", text: "Is waste being segregated and stored correctly?", type: "YES_NO", sortOrder: 2 },
+    { section: "PPE", text: "Are workers wearing the required PPE for the task?", type: "YES_NO", sortOrder: 3 },
+    { section: "PPE", text: "Is PPE in good, usable condition?", type: "PASS_FAIL", sortOrder: 4 },
+    { section: "Access & Egress", text: "Are emergency exits and access routes unobstructed?", type: "YES_NO", sortOrder: 5 },
+    { section: "General", text: "Additional observations", type: "TEXT", sortOrder: 6 },
+  ];
+  for (const q of inspectionQuestions) {
+    const existing = await prisma.hseInspectionQuestion.findFirst({
+      where: { templateId: inspectionTemplate.id, sortOrder: q.sortOrder },
+    });
+    if (!existing) {
+      await prisma.hseInspectionQuestion.create({
+        data: { templateId: inspectionTemplate.id, section: q.section, text: q.text, type: q.type, sortOrder: q.sortOrder },
+      });
     }
   }
 

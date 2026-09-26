@@ -135,6 +135,23 @@ export default async function MailPrintPage({
 
       <div className="mail-rich-content" style={{ margin: "16px 0" }} dangerouslySetInnerHTML={{ __html: mail.messageHtml }} />
 
+      <div style={{ borderTop: "1px solid #ded6c8", paddingTop: 10, marginBottom: 10 }}>
+        <div className="print-label" style={{ marginBottom: 6 }}>
+          Document Attachments ({mail.documentReferences.length})
+        </div>
+        {mail.documentReferences.length === 0 ? (
+          <div>No document attachments.</div>
+        ) : (
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            {mail.documentReferences.map((ref) => (
+              <li key={ref.id}>
+                {ref.document.documentNo} — {ref.document.title} (Rev {ref.revisionAtIssue ?? ref.document.currentRevision})
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       <div style={{ borderTop: "1px solid #ded6c8", paddingTop: 10 }}>
         <div className="print-label" style={{ marginBottom: 6 }}>
           File Attachments ({mail.attachments.length})

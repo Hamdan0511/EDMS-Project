@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     await requirePermission(user.id, "DOCUMENT_CREATE", { projectId });
   } catch (err) {
     if (err instanceof ForbiddenPermissionError) {
-      return NextResponse.json({ error: "Viewers cannot extract PDF pages" }, { status: 403 });
+      return NextResponse.json({ error: "You do not have permission to extract this file." }, { status: 403 });
     }
     throw err;
   }
@@ -52,28 +52,22 @@ export async function POST(request: NextRequest) {
 
   try {
     const result = await extractPdfPages({
+      projectId,
+      userId: user.id,
+      userName: user.name,
       file,
       pageSelection,
       keepOriginalOrder,
       outputFileName: typeof outputFileName === "string" ? outputFileName : undefined,
     });
-
-    return new NextResponse(new Uint8Array(result.bytes), {
-      headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="${encodeURIComponent(result.fileName)}"`,
-        "X-Extracted-Page-Count": String(result.pageCount),
-        "X-Source-Page-Count": String(result.sourcePageCount),
-        "X-Output-File-Name": encodeURIComponent(result.fileName),
-      },
-    });
+    return NextResponse.json(result);
   } catch (err) {
     if (err instanceof ExtractPdfError) {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }
     console.error("Extract PDF failed:", err);
     return NextResponse.json(
-      { error: "Failed to extract pages from the PDF. Please try again." },
+      { error: "We couldn't create the extracted PDF. The original file has not been changed." },
       { status: 500 },
     );
   }

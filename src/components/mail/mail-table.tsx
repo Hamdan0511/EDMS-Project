@@ -9,6 +9,19 @@ import { Paperclip, CheckCircle2 } from "@/components/ui/icons";
 import { ColumnManager } from "./column-manager";
 import { DEFAULT_VISIBLE_COLUMNS, type ColumnKey } from "./mail-table-columns";
 import { getSnapshot, setVisibleColumns } from "./column-visibility-store";
+import { MailSelectionBar } from "./mail-selection-bar";
+import {
+  loadMailSelection,
+  saveMailSelection,
+  selectionCount,
+  isIdSelected,
+  toggleId,
+  selectIds,
+  deselectIds,
+  selectAllResults,
+  clearSelection,
+  type MailSelectionState,
+} from "./mail-selection-store";
 
 export type MailRow = {
   id: string;
@@ -43,34 +56,59 @@ export type FilterValues = {
 
 export function MailTable({
   rows,
+  total,
   filters,
   statusOptions,
   typeOptions,
+  projectId,
+  queryParams,
+  canExport,
 }: {
   rows: MailRow[];
+  total: number;
   filters: FilterValues;
   statusOptions: { value: string; label: string }[];
   typeOptions: { value: string; label: string }[];
+  projectId: string;
+  queryParams: Record<string, string | undefined>;
+  canExport: boolean;
 }) {
   const router = useRouter();
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkClosing, setBulkClosing] = useState(false);
 
-  // Column visibility is a client-only preference (localStorage). The
-  // server always renders DEFAULT_VISIBLE_COLUMNS since it has no access
-  // to the browser's storage; swapping to the real stored value happens
-  // only after mount, via the `mounted` gate below, so hydration always
-  // matches the server-rendered HTML on the first paint.
-  const [mounted, setMounted] = useState(false);
-  const [visible, setVisible] = useState<Record<ColumnKey, boolean>>(DEFAULT_VISIBLE_COLUMNS);
+  // Only real, exportable (non-draft) rows participate in bulk
+  // selection/export — matches the register's own SENT-only export scope.
+  const exportableRows = useMemo(() => rows.filter((r) => r.statusLabel !== "Draft"), [rows]);
+  const pageIds = useMemo(() => exportableRows.map((r) => r.id), [exportableRows]);
+  const querySignature = useMemo(() => JSON.stringify(queryParams), [queryParams]);
 
-  // One-time hydration-safe read of a client-only external store
-  // (localStorage), gated by `mounted` so it never affects the first
-  // (server-matching) paint. Intentional use of setState in an effect.
+  // Selection is sessionStorage-backed (see mail-selection-store) so it
+  // survives real page navigations within the same search — but the server
+  // has no access to it, so the first paint always starts from an empty,
+  // hydration-safe default and swaps in the real stored value post-mount.
+  const [mounted, setMounted] = useState(false);
+  const [selection, setSelection] = useState<MailSelectionState>({ querySignature, mode: "MANUAL", ids: [] });
+
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    setSelection(loadMailSelection(querySignature));
+    setMounted(true);
+  }, [querySignature]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  function updateSelection(next: MailSelectionState) {
+    setSelection(next);
+    saveMailSelection(next);
+  }
+
+  // Column visibility remains its own independent, separately-persisted
+  // client preference (see column-visibility-store).
+  const [columnsMounted, setColumnsMounted] = useState(false);
+  const [visible, setVisible] = useState<Record<ColumnKey, boolean>>(DEFAULT_VISIBLE_COLUMNS);
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     setVisible(getSnapshot());
-    setMounted(true);
+    setColumnsMounted(true);
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -79,28 +117,22 @@ export function MailTable({
     setVisibleColumns(next);
   }
 
-  const allSelected = rows.length > 0 && selected.size === rows.length;
+  const count = mounted ? selectionCount(selection, total) : 0;
+  const pageAllSelected = mounted && pageIds.length > 0 && pageIds.every((id) => isIdSelected(selection, id));
+  const isVisible = (key: ColumnKey) => !columnsMounted || visible[key];
 
   function toggleAll() {
-    setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.id)));
+    updateSelection(pageAllSelected ? deselectIds(selection, pageIds) : selectIds(selection, pageIds));
   }
-
   function toggleOne(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    updateSelection(toggleId(selection, id));
   }
-
-  const selectedCount = useMemo(() => selected.size, [selected]);
-  const isVisible = (key: ColumnKey) => !mounted || visible[key];
 
   // Only SENT mail that isn't already Closed-Out can be closed out — matches
-  // the same eligibility the single-mail Actions menu enforces.
+  // the same eligibility the single-mail Actions menu enforces. This bulk
+  // action only ever considers rows actually loaded on the current page.
   const closableSelectedIds = rows
-    .filter((r) => selected.has(r.id) && r.statusLabel !== "Draft" && r.statusLabel !== "Closed-Out")
+    .filter((r) => mounted && isIdSelected(selection, r.id) && r.statusLabel !== "Draft" && r.statusLabel !== "Closed-Out")
     .map((r) => r.id);
 
   async function bulkMarkClosedOut() {
@@ -115,7 +147,7 @@ export function MailTable({
       ),
     );
     setBulkClosing(false);
-    setSelected(new Set());
+    updateSelection(clearSelection(querySignature));
     router.refresh();
   }
 
@@ -126,9 +158,18 @@ export function MailTable({
     <div>
       <div className="mb-2 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <span className="text-xs text-text-secondary">
-            {selectedCount > 0 ? `${selectedCount} of ${rows.length} selected` : ""}
-          </span>
+          {canExport && (
+            <MailSelectionBar
+              count={count}
+              total={total}
+              projectId={projectId}
+              queryParams={queryParams}
+              selection={selection}
+              onSelectCurrentPage={() => updateSelection(selectIds(selection, pageIds))}
+              onSelectAllResults={() => updateSelection(selectAllResults(querySignature))}
+              onClearSelection={() => updateSelection(clearSelection(querySignature))}
+            />
+          )}
           {closableSelectedIds.length > 0 && (
             <Button type="button" variant="secondary" size="sm" disabled={bulkClosing} onClick={bulkMarkClosedOut}>
               <CheckCircle2 size={13} />
@@ -136,7 +177,7 @@ export function MailTable({
             </Button>
           )}
         </div>
-        <ColumnManager visible={mounted ? visible : DEFAULT_VISIBLE_COLUMNS} onChange={handleColumnChange} />
+        <ColumnManager visible={columnsMounted ? visible : DEFAULT_VISIBLE_COLUMNS} onChange={handleColumnChange} />
       </div>
 
       <Table>
@@ -146,9 +187,9 @@ export function MailTable({
               <div className="flex items-center gap-2">
                 <input
                   type="checkbox"
-                  checked={allSelected}
+                  checked={pageAllSelected}
                   onChange={toggleAll}
-                  aria-label="Select all"
+                  aria-label="Select all on this page"
                   className="h-3.5 w-3.5 accent-brand-700"
                 />
                 <Paperclip size={12} className="text-text-muted" />
@@ -258,7 +299,7 @@ export function MailTable({
                 <div className="flex items-center gap-2">
                   <input
                     type="checkbox"
-                    checked={selected.has(m.id)}
+                    checked={mounted && isIdSelected(selection, m.id)}
                     onChange={() => toggleOne(m.id)}
                     aria-label={`Select ${m.mailNumber}`}
                     className="h-3.5 w-3.5 accent-brand-700"

@@ -10,7 +10,7 @@ export async function getMailDetail(id: string, projectId: string) {
       type: true,
       recipients: { include: { user: { include: { organization: true } } } },
       attachments: true,
-      documentReferences: { include: { document: true } },
+      documentReferences: { include: { document: true, documentVersion: true } },
       relatedMails: { include: { relatedMail: true } },
     },
   });
