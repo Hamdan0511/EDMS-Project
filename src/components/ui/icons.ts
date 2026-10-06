@@ -113,4 +113,11 @@ export {
   Siren,
   CalendarClock,
   ClipboardX,
+  MapPin,
+  CheckSquare,
+  ListTodo,
+  FlaskConical,
+  Camera,
+  ClipboardPen,
+  Hammer,
 } from "lucide-react";

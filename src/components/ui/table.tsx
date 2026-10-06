@@ -16,10 +16,17 @@ export function Tbody({ children }: { children: ReactNode }) {
   return <tbody>{children}</tbody>;
 }
 
-export function Tr({ children, ...props }: HTMLAttributes<HTMLTableRowElement>) {
+export function Tr({
+  children,
+  selected,
+  className = "",
+  ...props
+}: HTMLAttributes<HTMLTableRowElement> & { selected?: boolean }) {
   return (
     <tr
-      className="border-b border-border last:border-0 [tbody_&]:hover:bg-brand-50/60"
+      className={`border-b border-border last:border-0 [tbody_&]:hover:bg-brand-50/60 ${
+        selected ? "bg-brand-50 [tbody_&]:hover:bg-brand-50" : ""
+      } ${className}`}
       {...props}
     >
       {children}

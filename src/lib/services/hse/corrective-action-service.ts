@@ -19,6 +19,7 @@ const VALID_SOURCE_TYPES = [
   "HseEquipmentInspection",
   "HseEmergencyDrillFinding",
   "HseEmergencyEvent",
+  "FieldIssue",
 ] as const;
 
 export async function createCorrectiveAction(params: {

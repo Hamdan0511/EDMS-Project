@@ -24,6 +24,12 @@ model Organization {
   mailingGroups   MailingGroup[]
   hseEquipment    HseEquipment[]
   hseEmergencyContacts HseEmergencyContact[]
+  fieldObservations    FieldObservation[]
+  fieldIssues          FieldIssue[]
+  fieldPunchItems      FieldPunchItem[]
+  fieldItps            FieldItp[]
+  fieldItpItems        FieldItpItem[]
+  fieldTests           FieldTest[]
 
   @@index([name])
 }
@@ -123,6 +129,31 @@ model User {
   hseEmergencyDrillsCoordinated HseEmergencyDrill[]      @relation("HseEmergencyDrillCoordinator")
   hseEmergencyDrillsCreated     HseEmergencyDrill[]      @relation("HseEmergencyDrillCreatedBy")
   hseEmergencyDrillAttendances  HseEmergencyDrillAttendee[] @relation("HseEmergencyDrillAttendeeUser")
+  fieldAttachmentsUploaded      FieldAttachment[]
+  fieldDocumentReferencesCreated FieldDocumentReference[]
+  fieldPhotosCreated            FieldPhoto[] @relation("FieldPhotoCreatedBy")
+  fieldComments                 FieldComment[]
+  fieldObservationsResponsible  FieldObservation[] @relation("FieldObservationResponsible")
+  fieldObservationsCreated      FieldObservation[] @relation("FieldObservationCreatedBy")
+  fieldObservationsClosed       FieldObservation[] @relation("FieldObservationClosedBy")
+  fieldInspectionTemplatesCreated FieldInspectionTemplate[]
+  fieldInspectionsAssigned     FieldInspection[] @relation("FieldInspectionAssignee")
+  fieldInspectionsInspected    FieldInspection[] @relation("FieldInspectionInspector")
+  fieldInspectionsCreated      FieldInspection[] @relation("FieldInspectionCreatedBy")
+  fieldIssuesResponsible       FieldIssue[] @relation("FieldIssueResponsible")
+  fieldIssuesVerified          FieldIssue[] @relation("FieldIssueVerifiedBy")
+  fieldIssuesCreated           FieldIssue[] @relation("FieldIssueCreatedBy")
+  fieldIssuesClosed            FieldIssue[] @relation("FieldIssueClosedBy")
+  fieldPunchlistsOwned         FieldPunchlist[] @relation("FieldPunchlistOwner")
+  fieldPunchlistsCreated       FieldPunchlist[] @relation("FieldPunchlistCreatedBy")
+  fieldPunchItemsResponsible   FieldPunchItem[] @relation("FieldPunchItemResponsible")
+  fieldPunchItemsCreated       FieldPunchItem[] @relation("FieldPunchItemCreatedBy")
+  fieldPunchItemsClosed        FieldPunchItem[] @relation("FieldPunchItemClosedBy")
+  fieldItpsCreated             FieldItp[]
+  fieldItpItemsDecided         FieldItpItem[] @relation("FieldItpItemDecidedBy")
+  fieldTestsTested             FieldTest[] @relation("FieldTestTestedBy")
+  fieldTestsCreated            FieldTest[] @relation("FieldTestCreatedBy")
+  fieldSiteWalksStarted        FieldSiteWalk[] @relation("FieldSiteWalkStartedBy")
 
   @@index([organizationId])
 }
@@ -194,6 +225,18 @@ model Project {
   hseEmergencyProcedures  HseEmergencyProcedure[]
   hseEmergencyEvents      HseEmergencyEvent[]
   hseEmergencyDrills      HseEmergencyDrill[]
+  fieldAreas              FieldArea[]
+  fieldPhotos             FieldPhoto[]
+  fieldLookups            FieldLookup[]
+  fieldObservations       FieldObservation[]
+  fieldInspectionTemplates FieldInspectionTemplate[]
+  fieldInspections        FieldInspection[]
+  fieldIssues             FieldIssue[]
+  fieldPunchlists         FieldPunchlist[]
+  fieldPunchItems         FieldPunchItem[]
+  fieldItps               FieldItp[]
+  fieldTests              FieldTest[]
+  fieldSiteWalks          FieldSiteWalk[]
 
   @@index([ownerOrgId])
 }
@@ -680,6 +723,7 @@ model Document {
   mailReferences      MailDocumentReference[]
   printRequests       PrintRequestDocument[]
   workflowDocuments   WorkflowDocument[]
+  fieldDocumentReferences FieldDocumentReference[]
 
   @@unique([projectId, documentNo])
   @@index([projectId, folderId])
@@ -704,6 +748,7 @@ model DocumentVersion {
   uploadedBy     User                    @relation("DocumentVersionUploadedBy", fields: [uploadedById], references: [id])
   mailReferences MailDocumentReference[]
   workflowDocuments WorkflowDocument[]
+  fieldDocumentReferences FieldDocumentReference[]
 
   @@unique([documentId, versionNo])
   @@index([documentId])
@@ -1930,6 +1975,652 @@ model HseEmergencyDrillFinding {
   drill HseEmergencyDrill @relation(fields: [drillId], references: [id], onDelete: Cascade)
 
   @@index([drillId])
+}
+
+// ---------------------------------------------------------------------------
+// Field — construction field operations (Observations, Inspections, Issues,
+// Punch/Snagging, ITP/Hold Points, Tests, Photos, Reports). Shared primitives
+// first: location hierarchy, polymorphic attachments/document-references
+// (mirroring HseAttachment / MailDocumentReference exactly), configurable
+// type lookups, and a polymorphic comment thread. Per-area models arrive in
+// later additive migrations as each area is built.
+// ---------------------------------------------------------------------------
+
+model FieldArea {
+  id          String   @id @default(cuid())
+  projectId   String
+  parentId    String?
+  name        String
+  code        String?
+  description String?
+  /// Free text (e.g. "Building"/"Floor"/"Zone"/"Room") — not an enum, so a
+  /// project's own hierarchy depth/vocabulary never requires a migration.
+  levelType   String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project  Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parent   FieldArea?  @relation("FieldAreaHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children     FieldArea[] @relation("FieldAreaHierarchy")
+  photos       FieldPhoto[]
+  observations FieldObservation[]
+  inspections  FieldInspection[]
+  issues       FieldIssue[]
+  punchlists   FieldPunchlist[]
+  punchItems   FieldPunchItem[]
+  itps         FieldItp[]
+  tests        FieldTest[]
+  siteWalks    FieldSiteWalk[]
+
+  @@index([projectId, parentId])
+}
+
+/// Polymorphic evidence attachment reused across every Field record type via
+/// recordType+recordId (recordType is the literal Prisma model name, e.g.
+/// "FieldObservation") — the same pattern this codebase already uses for
+/// HseAttachment, rather than a new table per Field area.
+model FieldAttachment {
+  id           String   @id @default(cuid())
+  recordType   String
+  recordId     String
+  fileName     String
+  storedPath   String
+  mimeType     String
+  sizeBytes    Int
+  /// Progress/Quality/Defect/Inspection/Before/After/General/Other —
+  /// meaningful mainly for photo-tagged uploads, optional everywhere else.
+  category     String?
+  uploadedById String
+  uploadedAt   DateTime @default(now())
+
+  uploadedBy       User        @relation(fields: [uploadedById], references: [id])
+  photoOriginalFor FieldPhoto? @relation("FieldPhotoOriginal")
+  photoMarkupFor   FieldPhoto? @relation("FieldPhotoMarkup")
+
+  @@index([recordType, recordId])
+}
+
+/// Gives photos first-class gallery identity (search/filter/category) while
+/// reusing FieldAttachment for the actual stored bytes. markupAttachmentId
+/// is where a future annotated derivative attaches — attachmentId (the
+/// original) is never overwritten or repointed.
+model FieldPhoto {
+  id                 String    @id @default(cuid())
+  projectId          String
+  attachmentId       String    @unique
+  markupAttachmentId String?   @unique
+  areaId             String?
+  siteWalkId         String?
+  capturedAt         DateTime?
+  createdById        String
+  createdAt          DateTime  @default(now())
+
+  project          Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  attachment       FieldAttachment  @relation("FieldPhotoOriginal", fields: [attachmentId], references: [id], onDelete: Cascade)
+  markupAttachment FieldAttachment? @relation("FieldPhotoMarkup", fields: [markupAttachmentId], references: [id])
+  area             FieldArea?       @relation(fields: [areaId], references: [id])
+  siteWalk         FieldSiteWalk?   @relation(fields: [siteWalkId], references: [id])
+  createdBy        User             @relation("FieldPhotoCreatedBy", fields: [createdById], references: [id])
+
+  @@index([projectId])
+}
+
+/// A guided site inspection walk-through — observations, issues, punch
+/// items, and photos captured while the walk is active are tagged with
+/// siteWalkId so a single "what did we find on this walk" summary/report
+/// can be generated afterward. endedAt null means the walk is still active.
+model FieldSiteWalk {
+  id          String    @id @default(cuid())
+  projectId   String
+  areaId      String?
+  purpose     String
+  startedById String
+  startedAt   DateTime  @default(now())
+  endedAt     DateTime?
+  createdAt   DateTime  @default(now())
+
+  project      Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  area         FieldArea?         @relation(fields: [areaId], references: [id])
+  startedBy    User               @relation("FieldSiteWalkStartedBy", fields: [startedById], references: [id])
+  observations FieldObservation[]
+  issues       FieldIssue[]
+  punchItems   FieldPunchItem[]
+  photos       FieldPhoto[]
+
+  @@index([projectId])
+}
+
+/// Polymorphic reference to a real Document/DocumentVersion (mirrors
+/// MailDocumentReference's exact snapshot shape) — optionally pinned to a
+/// normalized x/y coordinate for "place pin -> View on Drawing".
+model FieldDocumentReference {
+  id                String   @id @default(cuid())
+  recordType        String
+  recordId          String
+  documentId        String
+  documentVersionId String?
+  revisionAtIssue   String?
+  pinX              Float?
+  pinY              Float?
+  createdById       String
+  createdAt         DateTime @default(now())
+
+  document        Document        @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  documentVersion DocumentVersion? @relation(fields: [documentVersionId], references: [id])
+  createdBy       User            @relation(fields: [createdById], references: [id])
+
+  @@index([recordType, recordId])
+  @@index([documentId])
+}
+
+/// Configurable type lists (Observation Type, Issue Type, Punch Trade, Test
+/// Type, ...) as one small reusable per-project lookup table, discriminated
+/// by `kind` — avoids both hardcoded enums and a near-identical table per
+/// list.
+model FieldLookup {
+  id        String   @id @default(cuid())
+  projectId String
+  kind      String
+  name      String
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+
+  project      Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  observations FieldObservation[]
+  issues       FieldIssue[]
+  punchItems   FieldPunchItem[]
+  tests        FieldTest[]
+
+  @@unique([projectId, kind, name])
+  @@index([projectId, kind])
+}
+
+/// Polymorphic comment thread reused by every Field detail page's Activity
+/// tab — same recordType/recordId idiom as FieldAttachment.
+model FieldComment {
+  id         String   @id @default(cuid())
+  recordType String
+  recordId   String
+  authorId   String
+  body       String
+  createdAt  DateTime @default(now())
+
+  author User @relation(fields: [authorId], references: [id])
+
+  @@index([recordType, recordId])
+}
+
+enum FieldPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum FieldInspectionClassification {
+  R
+  S
+  W
+  H
+}
+
+// ---------------------------------------------------------------------------
+// Field — Site Observations. Distinct from HSE Observations (safety-focused)
+// and distinct from a Field Issue (observation is informational by default;
+// it is only converted into an Issue when action is genuinely required —
+// see observation-service.ts's convertToIssue).
+// ---------------------------------------------------------------------------
+
+enum FieldObservationStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  RESOLVED
+  VERIFICATION_REQUIRED
+  VERIFIED
+  CLOSED
+}
+
+model FieldObservation {
+  id                  String                 @id @default(cuid())
+  projectId           String
+  observationNumber   String
+  areaId              String?
+  siteWalkId          String?
+  title               String
+  description         String
+  typeId              String?
+  priority            FieldPriority          @default(MEDIUM)
+  isPositive          Boolean                @default(false)
+  responsibleOrgId    String?
+  responsibleUserId   String?
+  dueDate             DateTime?
+  status              FieldObservationStatus @default(OPEN)
+  createdById         String
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  closedById          String?
+  closedAt            DateTime?
+
+  project         Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  area            FieldArea?     @relation(fields: [areaId], references: [id])
+  siteWalk        FieldSiteWalk? @relation(fields: [siteWalkId], references: [id])
+  type            FieldLookup?   @relation(fields: [typeId], references: [id])
+  responsibleOrg  Organization?  @relation(fields: [responsibleOrgId], references: [id])
+  responsibleUser User?          @relation("FieldObservationResponsible", fields: [responsibleUserId], references: [id])
+  createdBy       User           @relation("FieldObservationCreatedBy", fields: [createdById], references: [id])
+  closedBy        User?          @relation("FieldObservationClosedBy", fields: [closedById], references: [id])
+
+  @@unique([projectId, observationNumber])
+  @@index([projectId, status])
+  @@index([areaId])
+}
+
+// ---------------------------------------------------------------------------
+// Field — Quality Inspections. Distinct from a Site Observation (an
+// inspection is a structured, template-driven checklist run against a
+// specific location/activity). Submitting computes PASSED/FAILED server-side
+// from whether any MANDATORY item failed — never a client-supplied result.
+// ---------------------------------------------------------------------------
+
+model FieldInspectionTemplate {
+  id          String   @id @default(cuid())
+  projectId   String
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project     Project                      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy   User                         @relation(fields: [createdById], references: [id])
+  groups      FieldInspectionTemplateGroup[]
+  inspections FieldInspection[]
+
+  @@index([projectId, isActive])
+}
+
+model FieldInspectionTemplateGroup {
+  id         String @id @default(cuid())
+  templateId String
+  name       String
+  sortOrder  Int    @default(0)
+
+  template FieldInspectionTemplate      @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  items    FieldInspectionTemplateItem[]
+
+  @@index([templateId])
+}
+
+enum FieldResponseType {
+  PASS_FAIL
+  YES_NO
+  TEXT
+  NUMBER
+  DATE
+}
+
+model FieldInspectionTemplateItem {
+  id           String            @id @default(cuid())
+  groupId      String
+  label        String
+  responseType FieldResponseType @default(PASS_FAIL)
+  isMandatory  Boolean           @default(true)
+  sortOrder    Int               @default(0)
+
+  group     FieldInspectionTemplateGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  responses FieldInspectionResponse[]
+
+  @@index([groupId])
+}
+
+enum FieldInspectionStatus {
+  DRAFT
+  ASSIGNED
+  IN_PROGRESS
+  SUBMITTED
+  PASSED
+  FAILED
+  CLOSED
+}
+
+model FieldInspection {
+  id               String                 @id @default(cuid())
+  projectId        String
+  inspectionNumber String
+  templateId       String
+  areaId           String?
+  assigneeId       String?
+  inspectorId      String?
+  dueDate          DateTime?
+  status           FieldInspectionStatus  @default(DRAFT)
+  submittedAt      DateTime?
+  createdById      String
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  project   Project                    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  template  FieldInspectionTemplate    @relation(fields: [templateId], references: [id])
+  area      FieldArea?                 @relation(fields: [areaId], references: [id])
+  assignee  User?                      @relation("FieldInspectionAssignee", fields: [assigneeId], references: [id])
+  inspector User?                      @relation("FieldInspectionInspector", fields: [inspectorId], references: [id])
+  createdBy User                       @relation("FieldInspectionCreatedBy", fields: [createdById], references: [id])
+  responses FieldInspectionResponse[]
+
+  @@unique([projectId, inspectionNumber])
+  @@index([projectId, status])
+  @@index([areaId])
+}
+
+enum FieldChecklistResult {
+  PASS
+  FAIL
+  NA
+  YES
+  NO
+}
+
+/// Snapshots the template item's label at response time (`label`) so later
+/// template edits never rewrite history — the response itself is the
+/// permanent record of what was actually asked and answered.
+model FieldInspectionResponse {
+  id            String                @id @default(cuid())
+  inspectionId  String
+  templateItemId String
+  label         String
+  result        FieldChecklistResult?
+  textValue     String?
+  note          String?
+  sortOrder     Int                   @default(0)
+
+  inspection   FieldInspection              @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  templateItem FieldInspectionTemplateItem  @relation(fields: [templateItemId], references: [id])
+
+  @@index([inspectionId])
+}
+
+// ---------------------------------------------------------------------------
+// Field — Site Issues. The real "action required" record — created manually
+// or from an Observation/Inspection-item/Test/Punch/Photo via the generic
+// sourceType/sourceId pair (mirrors HseCorrectiveAction's exact pattern).
+// Independent verification is enforced server-side: the assignee can never
+// verify their own work (see issue-service.ts).
+// ---------------------------------------------------------------------------
+
+enum FieldIssueStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  WORK_DONE
+  READY_FOR_VERIFICATION
+  REJECTED
+  VERIFIED
+  CLOSED
+  DISPUTED
+}
+
+model FieldIssue {
+  id                String           @id @default(cuid())
+  projectId         String
+  issueNumber       String
+  areaId            String?
+  siteWalkId        String?
+  title             String
+  description       String
+  typeId            String?
+  priority          FieldPriority    @default(MEDIUM)
+  responsibleOrgId  String?
+  responsibleUserId String?
+  dueDate           DateTime?
+  sourceType        String           @default("manual")
+  sourceId          String?
+  status            FieldIssueStatus @default(OPEN)
+  verifiedById      String?
+  verifiedAt        DateTime?
+  createdById       String
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  closedById        String?
+  closedAt          DateTime?
+
+  project         Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  area            FieldArea?     @relation(fields: [areaId], references: [id])
+  siteWalk        FieldSiteWalk? @relation(fields: [siteWalkId], references: [id])
+  type            FieldLookup?   @relation(fields: [typeId], references: [id])
+  responsibleOrg  Organization?  @relation(fields: [responsibleOrgId], references: [id])
+  responsibleUser User?          @relation("FieldIssueResponsible", fields: [responsibleUserId], references: [id])
+  verifiedBy      User?          @relation("FieldIssueVerifiedBy", fields: [verifiedById], references: [id])
+  createdBy       User           @relation("FieldIssueCreatedBy", fields: [createdById], references: [id])
+  closedBy        User?          @relation("FieldIssueClosedBy", fields: [closedById], references: [id])
+  punchlistLinks  FieldPunchlistIssue[]
+
+  @@unique([projectId, issueNumber])
+  @@index([projectId, status])
+  @@index([sourceType, sourceId])
+  @@index([areaId])
+}
+
+// ---------------------------------------------------------------------------
+// Field — Punch / Snagging. Punchlists GROUP related punch items; an
+// existing FieldIssue can be attached to a punchlist via FieldPunchlistIssue
+// instead of being re-created as a punch item, so the same underlying
+// problem is never duplicated as two records.
+// ---------------------------------------------------------------------------
+
+enum FieldPunchlistStatus {
+  OPEN
+  IN_PROGRESS
+  CLOSED
+}
+
+model FieldPunchlist {
+  id             String               @id @default(cuid())
+  projectId      String
+  punchlistNumber String
+  title          String
+  areaId         String?
+  description    String?
+  dueDate        DateTime?
+  ownerId        String?
+  status         FieldPunchlistStatus @default(OPEN)
+  createdById    String
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  closedAt       DateTime?
+
+  project   Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  area      FieldArea?           @relation(fields: [areaId], references: [id])
+  owner     User?                @relation("FieldPunchlistOwner", fields: [ownerId], references: [id])
+  createdBy User                 @relation("FieldPunchlistCreatedBy", fields: [createdById], references: [id])
+  items     FieldPunchItem[]
+  issues    FieldPunchlistIssue[]
+
+  @@unique([projectId, punchlistNumber])
+  @@index([projectId, status])
+}
+
+/// Attaches an EXISTING FieldIssue to a punchlist without duplicating it as
+/// a separate punch item.
+model FieldPunchlistIssue {
+  id          String @id @default(cuid())
+  punchlistId String
+  issueId     String
+
+  punchlist FieldPunchlist @relation(fields: [punchlistId], references: [id], onDelete: Cascade)
+  issue     FieldIssue     @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@unique([punchlistId, issueId])
+}
+
+enum FieldPunchItemStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  WORK_DONE
+  READY_FOR_VERIFICATION
+  REWORK_REQUIRED
+  VERIFIED
+  CLOSED
+}
+
+model FieldPunchItem {
+  id                String               @id @default(cuid())
+  projectId         String
+  punchlistId       String?
+  punchItemNumber   String
+  title             String
+  description       String
+  areaId            String?
+  siteWalkId        String?
+  tradeId           String?
+  priority          FieldPriority        @default(MEDIUM)
+  responsibleOrgId  String?
+  responsibleUserId String?
+  dueDate           DateTime?
+  status            FieldPunchItemStatus @default(OPEN)
+  createdById       String
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  closedById        String?
+  closedAt          DateTime?
+
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  punchlist       FieldPunchlist? @relation(fields: [punchlistId], references: [id])
+  area            FieldArea?      @relation(fields: [areaId], references: [id])
+  siteWalk        FieldSiteWalk?  @relation(fields: [siteWalkId], references: [id])
+  trade           FieldLookup?    @relation(fields: [tradeId], references: [id])
+  responsibleOrg  Organization?   @relation(fields: [responsibleOrgId], references: [id])
+  responsibleUser User?           @relation("FieldPunchItemResponsible", fields: [responsibleUserId], references: [id])
+  createdBy       User            @relation("FieldPunchItemCreatedBy", fields: [createdById], references: [id])
+  closedBy        User?           @relation("FieldPunchItemClosedBy", fields: [closedById], references: [id])
+
+  @@unique([projectId, punchItemNumber])
+  @@index([projectId, status])
+  @@index([punchlistId])
+  @@index([areaId])
+}
+
+// ---------------------------------------------------------------------------
+// Field — Inspection & Test Plans and Hold Points. HOLD_ACTIVE is only ever
+// entered by an H-classified item; release to RELEASED only ever happens as
+// the output of an approval decision (itp-service.ts) — never a direct
+// client write, mirroring the Equipment Safety status-protection pattern.
+// ---------------------------------------------------------------------------
+
+enum FieldItpStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  SUPERSEDED
+}
+
+model FieldItp {
+  id               String         @id @default(cuid())
+  projectId        String
+  itpNumber        String
+  title            String
+  revision         String         @default("A")
+  discipline       String?
+  activity         String?
+  description      String?
+  areaId           String?
+  responsibleOrgId String?
+  status           FieldItpStatus @default(DRAFT)
+  createdById      String
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  project        Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  area           FieldArea?      @relation(fields: [areaId], references: [id])
+  responsibleOrg Organization?   @relation(fields: [responsibleOrgId], references: [id])
+  createdBy      User            @relation(fields: [createdById], references: [id])
+  items          FieldItpItem[]
+
+  @@unique([projectId, itpNumber])
+  @@index([projectId, status])
+}
+
+enum FieldItpItemStatus {
+  PENDING
+  HOLD_ACTIVE
+  INSPECTION_REQUESTED
+  APPROVED
+  REJECTED
+  RELEASED
+}
+
+model FieldItpItem {
+  id                 String                         @id @default(cuid())
+  itpId              String
+  sequence           Int
+  activity           String
+  inspectionType     FieldInspectionClassification
+  responsibleOrgId   String?
+  acceptanceCriteria String?
+  status             FieldItpItemStatus             @default(PENDING)
+  requestedAt        DateTime?
+  decidedById        String?
+  decidedAt          DateTime?
+  decisionNote       String?
+
+  itp            FieldItp      @relation(fields: [itpId], references: [id], onDelete: Cascade)
+  responsibleOrg Organization? @relation(fields: [responsibleOrgId], references: [id])
+  decidedBy      User?         @relation("FieldItpItemDecidedBy", fields: [decidedById], references: [id])
+
+  @@unique([itpId, sequence])
+  @@index([itpId, status])
+}
+
+// ---------------------------------------------------------------------------
+// Field — Test & Inspection Results. Retest chain mirrors Equipment
+// Safety's proven previousInspectionId self-relation exactly — history is
+// never overwritten, a failed test's retest is always a new row linked back.
+// ---------------------------------------------------------------------------
+
+enum FieldTestResult {
+  PASS
+  FAIL
+  PENDING
+  NOT_APPLICABLE
+}
+
+model FieldTest {
+  id                  String           @id @default(cuid())
+  projectId           String
+  testNumber          String
+  typeId              String?
+  areaId              String?
+  testDate            DateTime
+  testedByName        String
+  testedById          String?
+  witnessedByName     String?
+  responsibleOrgId    String?
+  requirement         String?
+  actualResult        String?
+  unit                String?
+  resultStatus        FieldTestResult  @default(PENDING)
+  certificateReference String?
+  notes               String?
+  previousTestId      String?          @unique
+  createdById         String
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  project         Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type            FieldLookup?  @relation(fields: [typeId], references: [id])
+  area            FieldArea?    @relation(fields: [areaId], references: [id])
+  testedBy        User?         @relation("FieldTestTestedBy", fields: [testedById], references: [id])
+  responsibleOrg  Organization? @relation(fields: [responsibleOrgId], references: [id])
+  createdBy       User          @relation("FieldTestCreatedBy", fields: [createdById], references: [id])
+  previousTest    FieldTest?    @relation("FieldTestRetestChain", fields: [previousTestId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  retest          FieldTest?    @relation("FieldTestRetestChain")
+
+  @@unique([projectId, testNumber])
+  @@index([projectId, resultStatus])
+  @@index([areaId])
 }
 
 // ---------------------------------------------------------------------------

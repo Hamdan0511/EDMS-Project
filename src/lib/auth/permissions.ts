@@ -45,6 +45,17 @@ export async function requirePermission(
   }
 }
 
+export async function hasAnyPermission(
+  userId: string,
+  permissionCodes: string[],
+  scope: { projectId?: string; organizationId?: string },
+): Promise<boolean> {
+  for (const code of permissionCodes) {
+    if (await hasPermission(userId, code, scope)) return true;
+  }
+  return false;
+}
+
 export async function requireAnyPermission(
   userId: string,
   permissionCodes: string[],
