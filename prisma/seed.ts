@@ -202,6 +202,10 @@ async function main() {
     { code: "FIELD_TEST_APPROVE", description: "Approve test results", category: "Field" },
     { code: "FIELD_MANAGE_PHOTOS", description: "Upload and manage site photos and evidence", category: "Field" },
     { code: "FIELD_EXPORT_REPORTS", description: "Export Field reports", category: "Field" },
+    // Management System
+    { code: "MANAGEMENT_SYSTEM_VIEW", description: "View the Management System document register and certificates", category: "Management System" },
+    { code: "MANAGEMENT_SYSTEM_DOWNLOAD", description: "Download Management System controlled documents and certificates", category: "Management System" },
+    { code: "MANAGEMENT_SYSTEM_MANAGE", description: "Upload, replace versions, and manage Management System document metadata", category: "Management System" },
   ];
   const permissionRows = new Map<string, { id: string }>();
   for (const perm of permissions) {
@@ -264,12 +268,15 @@ async function main() {
         "FIELD_TEST_APPROVE",
         "FIELD_MANAGE_PHOTOS",
         "FIELD_EXPORT_REPORTS",
+        "MANAGEMENT_SYSTEM_VIEW",
+        "MANAGEMENT_SYSTEM_DOWNLOAD",
+        "MANAGEMENT_SYSTEM_MANAGE",
       ],
     },
     {
       name: "Project Viewer",
       description: "Read-only Directory access — maps from the legacy VIEWER role.",
-      permissionCodes: ["DIRECTORY_VIEW", "DIRECTORY_SEARCH", "HSE_VIEW", "FIELD_VIEW"],
+      permissionCodes: ["DIRECTORY_VIEW", "DIRECTORY_SEARCH", "HSE_VIEW", "FIELD_VIEW", "MANAGEMENT_SYSTEM_VIEW"],
     },
   ];
   const roleRows = new Map<string, { id: string }>();

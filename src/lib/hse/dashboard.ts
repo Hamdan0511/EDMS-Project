@@ -65,7 +65,38 @@ export async function getHseDashboardData(params: {
   const now = new Date();
   const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-  const [incidents, nearMisses, observations, hazards, inspections, correctiveActions, permits] = await Promise.all([
+  // All 5 query groups below are mutually independent (none reads another's
+  // result), so they run as ONE parallel batch instead of 5 sequential
+  // Promise.all "waves" — each wave previously paid its own round-trip
+  // latency one after another even though nothing required that ordering.
+  const [
+    incidents,
+    nearMisses,
+    observations,
+    hazards,
+    inspections,
+    correctiveActions,
+    permits,
+    openHazards,
+    openIncidents,
+    openNearMisses,
+    openObservations,
+    pendingInspections,
+    overdueActions,
+    permitsExpiringSoon,
+    myActionsRaw,
+    criticalIncidents,
+    highRiskHazards,
+    overdueActionRows,
+    expiringPermitRows,
+    recentIncidents,
+    recentNearMisses,
+    recentObservations,
+    recentHazards,
+    recentInspections,
+    recentActions,
+    recentPermits,
+  ] = await Promise.all([
     prisma.hseIncident.count({ where: { projectId, ...(range ? { incidentDate: range } : {}) } }),
     prisma.hseNearMiss.count({ where: { projectId, ...(range ? { reportedAt: range } : {}) } }),
     prisma.hseObservation.count({ where: { projectId, ...(range ? { reportedAt: range } : {}) } }),
@@ -73,28 +104,20 @@ export async function getHseDashboardData(params: {
     prisma.hseInspection.count({ where: { projectId, ...(range ? { createdAt: range } : {}) } }),
     prisma.hseCorrectiveAction.count({ where: { projectId, ...(range ? { createdAt: range } : {}) } }),
     prisma.hsePermit.count({ where: { projectId, ...(range ? { createdAt: range } : {}) } }),
-  ]);
-
-  const [openHazards, openIncidents, openNearMisses, openObservations, pendingInspections, overdueActions, permitsExpiringSoon] =
-    await Promise.all([
-      prisma.hseHazard.count({ where: { projectId, status: { not: "CLOSED" } } }),
-      prisma.hseIncident.count({ where: { projectId, status: { not: "CLOSED" } } }),
-      prisma.hseNearMiss.count({ where: { projectId, status: { not: "CLOSED" } } }),
-      prisma.hseObservation.count({ where: { projectId, status: { not: "CLOSED" } } }),
-      prisma.hseInspection.count({ where: { projectId, status: { in: ["SCHEDULED", "IN_PROGRESS"] } } }),
-      prisma.hseCorrectiveAction.count({
-        where: { projectId, status: { notIn: ["VERIFIED", "CLOSED"] }, dueDate: { lt: now } },
-      }),
-      prisma.hsePermit.count({ where: { projectId, status: "ACTIVE", endDate: { gte: now, lte: in7Days } } }),
-    ]);
-
-  const myActionsRaw = await prisma.hseCorrectiveAction.findMany({
-    where: { projectId, assignedToId: userId, status: { not: "CLOSED" } },
-    orderBy: { dueDate: "asc" },
-    take: 10,
-  });
-
-  const [criticalIncidents, highRiskHazards, overdueActionRows, expiringPermitRows] = await Promise.all([
+    prisma.hseHazard.count({ where: { projectId, status: { not: "CLOSED" } } }),
+    prisma.hseIncident.count({ where: { projectId, status: { not: "CLOSED" } } }),
+    prisma.hseNearMiss.count({ where: { projectId, status: { not: "CLOSED" } } }),
+    prisma.hseObservation.count({ where: { projectId, status: { not: "CLOSED" } } }),
+    prisma.hseInspection.count({ where: { projectId, status: { in: ["SCHEDULED", "IN_PROGRESS"] } } }),
+    prisma.hseCorrectiveAction.count({
+      where: { projectId, status: { notIn: ["VERIFIED", "CLOSED"] }, dueDate: { lt: now } },
+    }),
+    prisma.hsePermit.count({ where: { projectId, status: "ACTIVE", endDate: { gte: now, lte: in7Days } } }),
+    prisma.hseCorrectiveAction.findMany({
+      where: { projectId, assignedToId: userId, status: { not: "CLOSED" } },
+      orderBy: { dueDate: "asc" },
+      take: 10,
+    }),
     prisma.hseIncident.findMany({
       where: { projectId, severity: "CRITICAL", status: { not: "CLOSED" } },
       orderBy: { incidentDate: "desc" },
@@ -115,6 +138,13 @@ export async function getHseDashboardData(params: {
       orderBy: { endDate: "asc" },
       take: 5,
     }),
+    prisma.hseIncident.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 10 }),
+    prisma.hseNearMiss.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 10 }),
+    prisma.hseObservation.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 10 }),
+    prisma.hseHazard.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 10 }),
+    prisma.hseInspection.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 10, include: { template: true } }),
+    prisma.hseCorrectiveAction.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 10 }),
+    prisma.hsePermit.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 10 }),
   ]);
 
   function daysBetween(a: Date, b: Date): number {
@@ -155,17 +185,6 @@ export async function getHseDashboardData(params: {
       href: `/hse/permits/${r.id}`,
     })),
   ].sort((a, b) => a.date.getTime() - b.date.getTime());
-
-  const [recentIncidents, recentNearMisses, recentObservations, recentHazards, recentInspections, recentActions, recentPermits] =
-    await Promise.all([
-      prisma.hseIncident.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 10 }),
-      prisma.hseNearMiss.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 10 }),
-      prisma.hseObservation.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 10 }),
-      prisma.hseHazard.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 10 }),
-      prisma.hseInspection.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 10, include: { template: true } }),
-      prisma.hseCorrectiveAction.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 10 }),
-      prisma.hsePermit.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 10 }),
-    ]);
 
   const recentActivity: RecentActivityRow[] = [
     ...recentIncidents.map((r) => ({

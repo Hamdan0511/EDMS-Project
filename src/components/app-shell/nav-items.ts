@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { Home, FileText, Mail, Users, GitBranch, HardHat, MapPin } from "@/components/ui/icons";
+import { Home, FileText, Mail, Users, GitBranch, HardHat, MapPin, ShieldCheck } from "@/components/ui/icons";
 
 type Icon = ComponentType<{ size?: number; className?: string; strokeWidth?: number }>;
 
@@ -106,4 +106,5 @@ export const NAV_ITEMS: (SimpleNavItem | MenuNavItem)[] = [
   { kind: "link", label: "Directory", href: "/directory", icon: Users },
   { kind: "link", label: "Health & Safety", href: "/hse", icon: HardHat },
   { kind: "link", label: "Field", href: "/field", icon: MapPin },
+  { kind: "link", label: "Management System", href: "/management-system", icon: ShieldCheck },
 ];

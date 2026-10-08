@@ -1,6 +1,7 @@
 import "server-only";
 
 import { randomBytes, createHash } from "crypto";
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import type { User } from "@prisma/client";
@@ -40,7 +41,14 @@ export async function destroySession(): Promise<void> {
   cookieStore.delete(SESSION_COOKIE_NAME);
 }
 
-export async function getCurrentUser(): Promise<User | null> {
+/**
+ * Wrapped in React's `cache()` — this function is called from both the
+ * (app) layout and every page's requirePageContext() during the same
+ * request, and previously ran its session+user DB lookup twice per
+ * navigation. Per-request memoization only (reset on every new request),
+ * so it cannot leak a session across users or persist past this request.
+ */
+export const getCurrentUser = cache(async function getCurrentUser(): Promise<User | null> {
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
   if (!token) return null;
@@ -66,7 +74,7 @@ export async function getCurrentUser(): Promise<User | null> {
   }
 
   return session.user;
-}
+});
 
 export async function requireCurrentUser(): Promise<User> {
   const user = await getCurrentUser();

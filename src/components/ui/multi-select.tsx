@@ -23,6 +23,7 @@ export function MultiSelect({
   placeholder?: string;
 }) {
   const [selected, setSelected] = useState<string[]>(defaultValue ?? []);
+  const [query, setQuery] = useState("");
 
   function toggle(value: string) {
     setSelected((prev) => (prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]));
@@ -34,6 +35,19 @@ export function MultiSelect({
       : selected.length === 1
         ? (options.find((o) => o.value === selected[0])?.label ?? selected[0])
         : `${selected.length} selected`;
+
+  const filteredOptions = query.trim()
+    ? options.filter((o) => o.label.toLowerCase().includes(query.trim().toLowerCase()))
+    : options;
+
+  const allFilteredSelected = filteredOptions.length > 0 && filteredOptions.every((o) => selected.includes(o.value));
+
+  function toggleAll() {
+    const filteredValues = filteredOptions.map((o) => o.value);
+    setSelected((prev) =>
+      allFilteredSelected ? prev.filter((v) => !filteredValues.includes(v)) : [...new Set([...prev, ...filteredValues])],
+    );
+  }
 
   return (
     <div>
@@ -52,22 +66,50 @@ export function MultiSelect({
         )}
       >
         {() => (
-          <div className="max-h-64 w-56 overflow-y-auto py-1">
-            {options.length === 0 && <p className="px-3 py-2 text-xs text-text-muted">No values configured.</p>}
-            {options.map((o) => (
-              <label
-                key={o.value}
-                className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[13px] text-text-primary hover:bg-brand-50"
-              >
+          <div className="w-56">
+            {options.length > 6 && (
+              <div className="border-b border-border p-1.5">
                 <input
-                  type="checkbox"
-                  checked={selected.includes(o.value)}
-                  onChange={() => toggle(o.value)}
-                  className="h-3.5 w-3.5 accent-brand-700"
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search..."
+                  className="w-full rounded-[3px] border border-border px-2 py-1 text-[12px] text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-700"
+                  onClick={(e) => e.stopPropagation()}
                 />
-                {o.label}
-              </label>
-            ))}
+              </div>
+            )}
+            <div className="max-h-56 overflow-y-auto py-1">
+              {options.length === 0 && <p className="px-3 py-2 text-xs text-text-muted">No values configured.</p>}
+              {filteredOptions.length === 0 && options.length > 0 && (
+                <p className="px-3 py-2 text-xs text-text-muted">No matching values.</p>
+              )}
+              {filteredOptions.length > 0 && (
+                <label className="flex cursor-pointer items-center gap-2 border-b border-border px-3 py-1.5 text-[13px] font-medium text-text-primary hover:bg-brand-50">
+                  <input
+                    type="checkbox"
+                    checked={allFilteredSelected}
+                    onChange={toggleAll}
+                    className="h-3.5 w-3.5 accent-brand-700"
+                  />
+                  Select All
+                </label>
+              )}
+              {filteredOptions.map((o) => (
+                <label
+                  key={o.value}
+                  className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[13px] text-text-primary hover:bg-brand-50"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(o.value)}
+                    onChange={() => toggle(o.value)}
+                    className="h-3.5 w-3.5 accent-brand-700"
+                  />
+                  {o.label}
+                </label>
+              ))}
+            </div>
           </div>
         )}
       </Dropdown>

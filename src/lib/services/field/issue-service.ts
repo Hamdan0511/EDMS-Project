@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import { requirePermission } from "@/lib/auth/permissions";
 import { computeNextNumber, fieldNumberPrefix } from "@/lib/field/numbering";
-import { ISSUE_STATUS_ORDER } from "@/lib/field/status";
+import { ISSUE_STATUS_ORDER, ISSUE_STATUS_LABELS } from "@/lib/field/status";
 import { assertActiveSiteWalk } from "@/lib/services/field/site-walk-service";
 import type { FieldIssue, FieldIssueStatus, FieldPriority } from "@prisma/client";
 
@@ -143,6 +143,16 @@ export function canTransitionIssueStatus(params: {
   const isReopeningFromClosed = existing.status === "CLOSED" && to !== "CLOSED";
   if (toIdx < fromIdx && !isReopeningFromClosed) {
     return { allowed: false, reason: `An issue already in "${existing.status}" cannot move backward to an earlier stage.` };
+  }
+  // Forward-only does not mean forward-ANY-distance: skipping straight past
+  // WORK_DONE/READY_FOR_VERIFICATION to CLOSED would bypass the independent-
+  // verification gate below entirely (an issue could be closed without ever
+  // passing through VERIFIED). Each step must be taken in order.
+  if (!isReopeningFromClosed && toIdx > fromIdx + 1) {
+    return {
+      allowed: false,
+      reason: `An issue in "${existing.status}" must move to "${ISSUE_STATUS_LABELS[ISSUE_STATUS_ORDER[fromIdx + 1]]}" next, not skip ahead to "${ISSUE_STATUS_LABELS[to]}".`,
+    };
   }
 
   // Independent verification: the assignee can never verify their own work.

@@ -154,6 +154,10 @@ model User {
   fieldTestsTested             FieldTest[] @relation("FieldTestTestedBy")
   fieldTestsCreated            FieldTest[] @relation("FieldTestCreatedBy")
   fieldSiteWalksStarted        FieldSiteWalk[] @relation("FieldSiteWalkStartedBy")
+  managementSystemDocumentsCreated ManagementSystemDocument[] @relation("ManagementSystemDocumentCreatedBy")
+  managementSystemDocumentsUpdated ManagementSystemDocument[] @relation("ManagementSystemDocumentUpdatedBy")
+  managementSystemDocumentVersionsUploaded ManagementSystemDocumentVersion[] @relation("ManagementSystemDocumentVersionUploadedBy")
+  managementSystemCertificatesUploaded ManagementSystemCertificate[] @relation("ManagementSystemCertificateUploadedBy")
 
   @@index([organizationId])
 }
@@ -237,8 +241,105 @@ model Project {
   fieldItps               FieldItp[]
   fieldTests              FieldTest[]
   fieldSiteWalks          FieldSiteWalk[]
+  managementSystemDocuments    ManagementSystemDocument[]
+  managementSystemCertificates ManagementSystemCertificate[]
 
   @@index([ownerOrgId])
+}
+
+// ---------------------------------------------------------------------------
+// Management System Documents — the company's controlled ISO 9001/14001/45001
+// document register (Quality/Environment/Health & Safety procedures, forms,
+// work instructions). Deliberately separate from the operational Aconex-style
+// Document register above: different lifecycle (no review workflow), scoped
+// to its own distinct controlled-document library per the explicit brief
+// ("Do NOT merge Management System Documents with the operational EDMS
+// Document Register").
+// ---------------------------------------------------------------------------
+
+enum ManagementSystemCategory {
+  QUALITY
+  ENVIRONMENT
+  HSE
+}
+
+model ManagementSystemDocument {
+  id               String                   @id @default(cuid())
+  projectId        String
+  documentNo       String
+  title            String
+  managementSystem ManagementSystemCategory
+  documentType     String
+  currentRevision  String                   @default("01")
+  documentDate     DateTime?
+  author           String?
+  documentOwner    String?
+  createdById      String
+  updatedById      String?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  project   Project                           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User                              @relation("ManagementSystemDocumentCreatedBy", fields: [createdById], references: [id])
+  updatedBy User?                             @relation("ManagementSystemDocumentUpdatedBy", fields: [updatedById], references: [id])
+  versions  ManagementSystemDocumentVersion[]
+
+  @@unique([projectId, documentNo])
+  @@index([projectId, managementSystem])
+}
+
+model ManagementSystemDocumentVersion {
+  id           String   @id @default(cuid())
+  documentId   String
+  revision     String
+  versionNo    Int
+  fileName     String
+  storedPath   String
+  mimeType     String
+  sizeBytes    Int
+  checksum     String
+  isCurrent    Boolean  @default(true)
+  notes        String?
+  uploadedById String
+  uploadedAt   DateTime @default(now())
+
+  document   ManagementSystemDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  uploadedBy User                     @relation("ManagementSystemDocumentVersionUploadedBy", fields: [uploadedById], references: [id])
+
+  @@unique([documentId, versionNo])
+  @@index([documentId])
+}
+
+/// One real certificate record per management system (Quality/Environment/HSE)
+/// — the actual uploaded ISO PDF is the source of truth; never regenerated.
+model ManagementSystemCertificate {
+  id               String                   @id @default(cuid())
+  projectId        String
+  managementSystem ManagementSystemCategory
+  isoStandard      String
+  title            String
+  fileName         String
+  storedPath       String
+  mimeType         String
+  sizeBytes        Int
+  checksum         String
+  /// Printed on the real certificate file itself — never invented; left
+  /// null until someone transcribes it from that specific certificate.
+  registrationNo   String?
+  certifyingBody   String?
+  scope            String?
+  issueDate        DateTime?
+  validUntil       DateTime?
+  expiryDate       DateTime?
+  uploadedById     String
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploadedBy User    @relation("ManagementSystemCertificateUploadedBy", fields: [uploadedById], references: [id])
+
+  @@unique([projectId, managementSystem])
+  @@index([projectId])
 }
 
 enum ProjectRole {

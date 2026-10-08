@@ -106,6 +106,7 @@ export {
   Eye as EyeIcon,
   ClipboardCheck,
   ShieldAlert,
+  ShieldCheck,
   BarChart3 as ReportsIcon,
   FileWarning,
   Wrench,

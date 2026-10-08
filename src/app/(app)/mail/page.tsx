@@ -52,10 +52,29 @@ export default async function MailListPage({
   const [mails, total, allCount, inboxCount, sentCount, draftsCount, mailTypes, canExport] = await Promise.all([
     prisma.mail.findMany({
       where,
-      include: {
-        sender: { include: { organization: true } },
-        type: true,
-        recipients: { include: { user: { include: { organization: true } } } },
+      // `select` instead of `include` — the row mapping below only ever
+      // reads sender/recipient name + organization name, never the rest of
+      // the User/Organization record. The previous `include` pulled every
+      // User column (email, passwordHash, phone, address, ...) and every
+      // Organization column for every sender AND every recipient, which on
+      // a mail with many recipients (this project has some with ~40) meant
+      // thousands of unnecessarily joined/serialized columns per page load.
+      select: {
+        id: true,
+        mailNumber: true,
+        subject: true,
+        status: true,
+        direction: true,
+        workflowStatus: true,
+        typeId: true,
+        sentAt: true,
+        createdAt: true,
+        responseDueDate: true,
+        sender: { select: { name: true, organization: { select: { name: true } } } },
+        type: { select: { name: true } },
+        recipients: {
+          select: { type: true, user: { select: { name: true, organization: { select: { name: true } } } } },
+        },
         replies: { select: { sentAt: true, createdAt: true }, orderBy: { createdAt: "desc" }, take: 1 },
         _count: { select: { attachments: true, replies: true } },
       },

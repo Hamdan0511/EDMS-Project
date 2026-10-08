@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import type { Project, ProjectMember, User } from "@prisma/client";
@@ -12,8 +13,14 @@ export type ProjectMembership = ProjectMember & { project: Project };
  * Resolves the user's active project, preferring the cookie selection but
  * always re-checking membership so a stale cookie can't leak another
  * project's data.
+ *
+ * Wrapped in React's `cache()` so repeated calls within the SAME server
+ * request (e.g. once from the (app) layout, once from every page's
+ * requirePageContext()) reuse one DB round trip instead of two — this is
+ * per-request memoization only, reset on every new request, so it cannot
+ * leak data across users or projects.
  */
-export async function getCurrentProjectMembership(
+export const getCurrentProjectMembership = cache(async function getCurrentProjectMembership(
   user: User,
 ): Promise<ProjectMembership | null> {
   const cookieStore = await cookies();
@@ -32,7 +39,7 @@ export async function getCurrentProjectMembership(
     include: { project: true },
     orderBy: { createdAt: "asc" },
   });
-}
+});
 
 export async function listUserProjects(user: User): Promise<Project[]> {
   const memberships = await prisma.projectMember.findMany({
