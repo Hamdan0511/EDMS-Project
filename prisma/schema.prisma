@@ -1205,6 +1205,11 @@ model AuditLog {
 
   @@index([projectId, entityType, entityId])
   @@index([userId])
+  // Recent-activity dashboards (getRecentFieldActivity and equivalents)
+  // filter by projectId + action prefix and sort by createdAt desc — the
+  // index above doesn't help that shape at all (it leads with entityType/
+  // entityId, which these queries don't filter on). This one does.
+  @@index([projectId, createdAt])
 }
 
 // ---------------------------------------------------------------------------

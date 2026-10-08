@@ -16,6 +16,8 @@ const eslintConfig = defineConfig([
     // install time (see the postinstall script in package.json) — not
     // hand-written source, so it shouldn't be linted.
     "public/pdf.worker.min.mjs",
+    // Generated Vitest/v8 coverage report, not source.
+    "coverage/**",
   ]),
 ]);
 

@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import { requirePermission } from "@/lib/auth/permissions";
 import { computeNextNumber, fieldNumberPrefix } from "@/lib/field/numbering";
-import { OBSERVATION_STATUS_ORDER } from "@/lib/field/status";
+import { OBSERVATION_STATUS_ORDER, OBSERVATION_STATUS_LABELS } from "@/lib/field/status";
 import { createIssue } from "@/lib/services/field/issue-service";
 import { assertActiveSiteWalk } from "@/lib/services/field/site-walk-service";
 import type { FieldObservationStatus, FieldPriority } from "@prisma/client";
@@ -120,6 +120,18 @@ export async function updateObservationStatus(params: {
   const isReopeningFromClosed = existing.status === "CLOSED" && status !== "CLOSED";
   if (toIdx < fromIdx && !isReopeningFromClosed) {
     throw new ObservationError(`An observation already in "${existing.status}" cannot move backward to an earlier stage.`);
+  }
+  // Forward-only does not mean forward-any-distance: skipping straight past
+  // RESOLVED/VERIFICATION_REQUIRED/VERIFIED to CLOSED would mean an
+  // observation was never actually reviewed before closure. (Unlike Field
+  // Issues, Observations have no separate independent-verifier permission —
+  // confirmed via the real permission catalog, FIELD_MANAGE_OBSERVATIONS
+  // alone governs every transition here — so this guard only enforces
+  // step-by-step progression, not self-verification.)
+  if (!isReopeningFromClosed && toIdx > fromIdx + 1) {
+    throw new ObservationError(
+      `An observation in "${existing.status}" must move to "${OBSERVATION_STATUS_LABELS[OBSERVATION_STATUS_ORDER[fromIdx + 1]]}" next, not skip ahead to "${OBSERVATION_STATUS_LABELS[status]}".`,
+    );
   }
 
   const updated = await prisma.fieldObservation.update({

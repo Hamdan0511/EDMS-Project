@@ -1,0 +1,108 @@
+name: E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# This repository is intentionally public (reviewers need access). This
+# workflow never touches the real/production database or real company
+# storage — it only ever talks to a disposable Postgres service container
+# created fresh for this job and destroyed when it ends, and to the
+# ephemeral runner's own local disk for file storage.
+env:
+  DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci_shanfari_edms_e2e?schema=public"
+  E2E_BASE_URL: "http://localhost:3100"
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci_shanfari_edms_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci_shanfari_edms_e2e"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      # Step 2: install dependencies
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      # Step 3: migrate schema (disposable database only — see env above)
+      - name: Migrate the disposable E2E database
+        run: npx prisma migrate deploy
+
+      # Step 4: seed controlled, deterministic test data
+      - name: Seed base dev-bootstrap data
+        run: npx prisma db seed
+
+      - name: Seed E2E-only fixture users
+        run: npm run seed:e2e
+
+      # Step 5: build application
+      - name: Build
+        run: npm run build
+
+      # Step 6: start application, wait until it is actually ready
+      - name: Start the application
+        run: npx next start -p 3100 &
+
+      - name: Wait for the application to become ready
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf "$E2E_BASE_URL/api/health/ready" > /dev/null; then
+              echo "Application is ready."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Application never became ready." >&2
+          exit 1
+
+      # Step 7: run Playwright
+      - name: Run E2E tests
+        run: npx playwright test
+
+      # Step 8: collect useful failure artifacts
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+      - name: Upload test traces/screenshots/videos
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results/
+          retention-days: 7
+
+      # Step 9: clean up — the Postgres service container and the whole
+      # runner are destroyed automatically when the job ends; nothing here
+      # is long-lived infrastructure that needs explicit teardown.

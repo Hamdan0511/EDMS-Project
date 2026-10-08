@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import { requirePermission } from "@/lib/auth/permissions";
 import { computeNextNumber, fieldNumberPrefix } from "@/lib/field/numbering";
-import { PUNCH_ITEM_STATUS_ORDER } from "@/lib/field/status";
+import { PUNCH_ITEM_STATUS_ORDER, PUNCH_ITEM_STATUS_LABELS } from "@/lib/field/status";
 import { assertActiveSiteWalk } from "@/lib/services/field/site-walk-service";
 import type { FieldPunchItem, FieldPunchItemStatus, FieldPriority } from "@prisma/client";
 
@@ -173,6 +173,16 @@ export function canTransitionPunchItemStatus(params: {
   const isReopeningFromClosed = existing.status === "CLOSED" && to !== "CLOSED";
   if (toIdx < fromIdx && !isReopeningFromClosed) {
     return { allowed: false, reason: `A punch item already in "${existing.status}" cannot move backward to an earlier stage.` };
+  }
+  // Same skip-ahead gap originally found and fixed in Field Issues
+  // (canTransitionIssueStatus): forward-only never meant forward-any-
+  // distance. Skipping straight to CLOSED/VERIFIED would bypass the
+  // independent-verification check immediately below.
+  if (!isReopeningFromClosed && toIdx > fromIdx + 1) {
+    return {
+      allowed: false,
+      reason: `A punch item in "${existing.status}" must move to "${PUNCH_ITEM_STATUS_LABELS[PUNCH_ITEM_STATUS_ORDER[fromIdx + 1]]}" next, not skip ahead to "${PUNCH_ITEM_STATUS_LABELS[to]}".`,
+    };
   }
 
   if (to === "VERIFIED" && existing.responsibleUserId === actingUserId) {

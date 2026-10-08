@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import { requirePermission } from "@/lib/auth/permissions";
 import { computeNextNumber, hseNumberPrefix } from "@/lib/hse/numbering";
-import { ACTION_STATUS_ORDER } from "@/lib/hse/status";
+import { ACTION_STATUS_ORDER, ACTION_STATUS_LABELS } from "@/lib/hse/status";
 import type { HseActionPriority, HseCorrectiveActionStatus } from "@prisma/client";
 
 export class CorrectiveActionError extends Error {}
@@ -97,6 +97,14 @@ export async function updateCorrectiveActionStatus(params: {
   const isReopeningFromClosed = existing.status === "CLOSED" && status !== "CLOSED";
   if (toIdx < fromIdx && !isReopeningFromClosed) {
     throw new CorrectiveActionError(`An action already in "${existing.status}" cannot move backward to an earlier stage.`);
+  }
+  // Same skip-ahead gap originally found in Field Issues: forward-only
+  // never meant forward-any-distance. Skipping straight to CLOSED/VERIFIED
+  // would bypass the independent-verification check immediately below.
+  if (!isReopeningFromClosed && toIdx > fromIdx + 1) {
+    throw new CorrectiveActionError(
+      `An action in "${existing.status}" must move to "${ACTION_STATUS_LABELS[ACTION_STATUS_ORDER[fromIdx + 1]]}" next, not skip ahead to "${ACTION_STATUS_LABELS[status]}".`,
+    );
   }
 
   // Verification must come from someone other than the assignee — a

@@ -5,7 +5,7 @@ import { logAudit } from "@/lib/audit";
 import { requirePermission } from "@/lib/auth/permissions";
 import { computeNextNumber, hseNumberPrefix } from "@/lib/hse/numbering";
 import { createCorrectiveAction } from "@/lib/services/hse/corrective-action-service";
-import { EMERGENCY_EVENT_STATUS_ORDER } from "@/lib/hse/status";
+import { EMERGENCY_EVENT_STATUS_ORDER, EMERGENCY_EVENT_STATUS_LABELS } from "@/lib/hse/status";
 import type {
   HseEmergencyProcedureStatus,
   HseEmergencyEventStatus,
@@ -333,6 +333,17 @@ export async function updateEmergencyEventStatus(params: {
   const isReopeningFromClosed = existing.status === "CLOSED" && status !== "CLOSED";
   if (toIdx < fromIdx && !isReopeningFromClosed) {
     throw new EmergencyError(`An event already in "${existing.status}" cannot move backward to an earlier stage.`);
+  }
+  // Unlike Field Issues/Punch/HSE Corrective Actions, there is no separate
+  // independent-verifier permission here to bypass — but REPORTED -> CLOSED
+  // in one jump would still mean an emergency event was never reviewed
+  // (UNDER_REVIEW) and never had follow-up actions tracked (FOLLOW_UP),
+  // which is a genuine safety/compliance gap, not just a cosmetic ordering
+  // rule. Same forward-one-step-only guard applies.
+  if (!isReopeningFromClosed && toIdx > fromIdx + 1) {
+    throw new EmergencyError(
+      `An event in "${existing.status}" must move to "${EMERGENCY_EVENT_STATUS_LABELS[EMERGENCY_EVENT_STATUS_ORDER[fromIdx + 1]]}" next, not skip ahead to "${EMERGENCY_EVENT_STATUS_LABELS[status]}".`,
+    );
   }
 
   const updated = await prisma.hseEmergencyEvent.update({ where: { id }, data: { status } });

@@ -1,6 +1,8 @@
-# Shanfari EDMS
+# Shanfari IMS
 
-An Electronic Document Management System (EDMS) for Shanfari Furnishing, built with Next.js (App Router), Prisma, and PostgreSQL. It manages project correspondence (mail) and controlled documents for a construction/fit-out project, modeled on enterprise EDMS platforms (e.g. Oracle Aconex) for workflow reference only — no proprietary branding, code, or assets are reused.
+A functional enterprise-style **Information & Document Management System prototype** for Shanfari Trading & Furnishing Co. LLC — built with Next.js (App Router), Prisma, and PostgreSQL. It covers project correspondence, controlled documents, workflow approvals, HSE (Health & Safety), construction field operations, and management-system (ISO) document control for a construction/fit-out project, modeled on enterprise platforms (e.g. Oracle Aconex) for workflow reference only — no proprietary branding, code, or assets are reused.
+
+**This is a prototype, not a production deployment.** It is not currently connected to Oracle Aconex, and it is not connected to any Shanfari production system. See [Relationship to Oracle Aconex](#relationship-to-oracle-aconex) below.
 
 ## Technology stack
 
@@ -8,14 +10,16 @@ An Electronic Document Management System (EDMS) for Shanfari Furnishing, built w
 - **Backend:** Next.js Route Handlers (API routes), Node.js
 - **Database:** PostgreSQL 16, via Prisma ORM 6
 - **Authentication:** Custom session-based auth — bcrypt-hashed passwords, SHA-256-hashed session tokens in an httpOnly cookie, a server-side `Session` table (no third-party auth provider)
-- **File storage:** Local disk, behind an authenticated API that never exposes real filesystem paths to the client (swappable to object storage later without changing callers)
+- **Authorization:** Database-backed RBAC (`Role` → `RolePermission` → `Permission`), checked server-side on every mutating route via `requirePermission()` — never only hidden in the UI
+- **File storage:** Local disk, behind an authenticated API that never exposes real filesystem paths to the client (swappable to object storage later without changing callers — see [docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md))
 - **Rich text:** Tiptap (mail composition)
-- **PDF processing:** `pdf-lib` (Split PDF, Extract PDF — genuine server-side processing, no external service)
-- **Testing:** Playwright (used for ad-hoc, script-based end-to-end verification during development; no committed automated test suite yet)
+- **PDF processing:** `pdf-lib` / `pdfjs-dist` (Split PDF, Extract PDF, in-browser PDF thumbnails — genuine processing, no external service)
+- **Unit testing:** Vitest (see [docs/TESTING.md](docs/TESTING.md))
+- **CI:** Two GitHub Actions workflows, both against a disposable Postgres service container, never the real database — `ci.yml` (install, Prisma validate, typecheck, lint, unit tests, build, `npm audit`) and `e2e.yml` (migrate, seed, build, start, run the Playwright suite, upload failure artifacts)
 
 ## Getting started
 
-1. Copy `.env.example` to `.env` (the default values already point at the Docker Compose Postgres below; adjust `DATABASE_URL` if port 5434 is taken on your machine).
+1. Copy `.env.example` to `.env` (the default values already point at the Docker Compose Postgres below; adjust `DATABASE_URL` if port 5434 is taken on your machine). See `.env.example` for what each variable actually does — there is currently only one required variable.
 2. Start Postgres:
    ```bash
    docker compose up -d
@@ -39,6 +43,18 @@ npm run build
 npm run start
 ```
 
+See [docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md) for what "production" actually means for this prototype today, and what is still missing before it could run against real company data.
+
+### Running tests
+
+```bash
+npm run test          # unit tests (Vitest), one-shot
+npm run test:watch    # unit tests, watch mode
+npm run test:coverage # unit tests with a real coverage report
+```
+
+See [docs/TESTING.md](docs/TESTING.md) for what is and isn't covered, and [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) for the full history of QA passes run against this codebase.
+
 ### Port note
 
 If you already have a PostgreSQL server running natively on `5432`, this project's Docker container is mapped to host port **5434** to avoid silently connecting to the wrong database (see `docker-compose.yml`).
@@ -46,55 +62,107 @@ If you already have a PostgreSQL server running natively on `5432`, this project
 ## Project structure
 
 ```
-prisma/                   Schema, migrations, seed script
+prisma/                        Schema, migrations, seed script
 src/
   app/
-    (app)/                Authenticated app shell: home, documents, mail, directory, search
-    api/                  Route handlers (REST-style JSON/multipart APIs)
-    document-print/       Standalone print view for a Document
-    mail-print/           Standalone print view for a Mail (Screen/Letter style)
-    login/                Login page
-  components/
-    documents/            Document Register, Document Detail, Split/Extract PDF, Temporary Files
-    mail/                 Mail list/compose/detail, rich-text editor, Register Incoming Mail
-    app-shell/            Header, nav, page header
-    ui/                   Shared primitives (Button, Input, Select, Modal, Table, ...)
+    (app)/                     Authenticated app shell
+      home/                    Project dashboard
+      documents/               Document Register, Drawings, Temporary Files, Split/Extract PDF
+      mail/                    Mail (All/Inbox/Sent/Drafts, compose, incoming registration)
+      workflows/               Workflow templates + routed approval workflows
+      directory/               Project members, organizations, mailing groups
+      hse/                     Health & Safety (incidents, observations, inspections, permits,
+                                 risk assessments, corrective actions, emergency management,
+                                 equipment safety, statistics)
+      field/                   Construction field operations (observations, issues, punch lists,
+                                 ITP/hold points, tests, photos, site walks, reports)
+      management-system/       Controlled document register + ISO certificates
+      search/                  Cross-project search
+    (marketing)/                Public-facing marketing site (about/services/projects/contact)
+    api/                       Route handlers (REST-style JSON/multipart APIs)
+    api/health/                Liveness/readiness endpoints
+    document-print/, mail-print/, field-print/  Standalone branded print views
+    login/                     Login page
+  components/                  UI components, grouped by module (documents/, mail/, hse/, field/, ...)
   lib/
-    auth/, mail/, documents/, temporary-files/, services/, validation/, files/
-    Business logic and validation live here, not in route handlers or components.
-  generated/prisma/       Prisma client output (generated, not hand-edited)
-storage/                  Local file storage root (gitignored; created at runtime)
+    auth/                      Session + RBAC permission checks
+    services/                  Business logic (one service module per entity/workflow)
+    storage.ts                 Local-disk file storage abstraction
+    *                          Validation, numbering, status/state-machine helpers, per module
+  instrumentation.ts           Fails fast on server start if required env vars are missing
+storage/                       Local file storage root (gitignored; created at runtime)
+docs/                          Architecture, security, testing, deployment, and QA documentation
+.github/workflows/ci.yml       CI pipeline
 ```
 
 ## Authentication & authorization
 
-- Passwords are hashed with bcrypt; sessions are opaque random tokens, SHA-256-hashed before being stored, set as an httpOnly cookie.
-- Every project-scoped API route resolves the target resource's real `projectId` from the database first, then calls `assertProjectMember` — a client cannot access another project's data by manipulating an ID in a URL or request body.
-- Role-based restrictions (`ADMIN` / `MEMBER` / `VIEWER`) are enforced server-side on every mutating route, not just hidden in the UI.
-
-## Core EDMS workflows
-
-**Temporary Files → Document Register.** A working file (a manual upload, or the output of a PDF utility) is never automatically an official Document. It is first saved as a `TemporaryFile`. A user must explicitly "Register as Document" — this atomically creates the real `Document` + `DocumentVersion` and marks the source `TemporaryFile` as `REGISTERED`, reusing the same physical file rather than duplicating it.
-
-**Split PDF / Extract PDF.** Both process the uploaded PDF entirely server-side (`pdf-lib`) — no external service. Split PDF produces one `TemporaryFile` per page; Extract PDF returns the extracted pages directly, with an option to also save the result to Temporary Files. Neither ever creates a Document directly.
-
-**Register Incoming Mail.** Models correspondence *received* from an external/project party, as distinct from New Mail (correspondence the project team sends). The external sender is a real Directory contact — either an existing project member or a lightweight "guest" contact created inline (a real `User`/`ProjectMember` marked as a non-login guest account, so it fully reuses the existing Directory search and recipient-picker UI). Supports Mail Type, configurable per-type attributes (with an inline "Select Attributes" picker), Response Required with a due date, attaching an existing Document or existing Mail by reference, and local file attachments. Draft and Register both persist to the same `Mail` model New Mail uses, tagged with `direction: INCOMING`.
+- Passwords are hashed with bcrypt; sessions are opaque random tokens, SHA-256-hashed before being stored, set as an httpOnly cookie (`Secure` in production).
+- Every project-scoped API route resolves the target resource's real `projectId` from the database first, then calls `assertProjectMember()` — a client cannot access another project's data by manipulating an ID in a URL or request body.
+- Authorization is a real database-backed RBAC catalog (`Permission` / `Role` / `RolePermission` / `UserRoleAssignment`), checked server-side via `requirePermission()`/`hasPermission()` on every mutating route — see [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Modules
 
 - **Home** — project-scoped dashboard with real counts and recent activity.
 - **Documents** — Document Register (search/filter/sort/pagination/column management/bulk actions/real ZIP export), Document Detail with revision history, Temporary Files (upload, register as document), Split PDF, Extract PDF, Drawings (a filtered Document Register view).
-- **Mail** — All Mail / Inbox / Sent / Drafts tabs with search, filters, advanced search, column management; New Mail (rich-text compose, real Directory-backed To/Cc, attachments, draft/send, Reply/Reply All/Forward with quoted-thread content); Register Incoming Mail; Mail Detail with threading, Response Required/Overdue tracking, Close-Out, and Print (Screen and Letter styles).
+- **Mail** — All Mail / Inbox / Sent / Drafts tabs with search, filters, advanced search; New Mail (rich-text compose, real Directory-backed To/Cc, attachments, draft/send, Reply/Reply All/Forward); Register Incoming Mail; Mail Detail with threading, Response Required/Overdue tracking, Close-Out, and Print.
+- **Workflows** — configurable multi-step approval templates routed over real Documents, with a full event/audit history per workflow instance.
 - **Directory** — real project members (users + organizations), searchable, reused by every recipient picker in Mail.
+- **HSE (Health & Safety)** — incidents, observations, near misses, hazards, risk assessments, inspections, permits to work, corrective actions, emergency management (procedures/events/drills/contacts), equipment safety, and statistics — each with its own server-enforced status lifecycle.
+- **Field** — construction field operations: site observations, quality inspections (template-driven), issues, punch lists/snagging, ITP & hold points, test/inspection results, site photos, site walks, and reports — integrated with Documents/Drawings, Workflows, and HSE corrective actions rather than duplicating them.
+- **Management System** — the controlled-document register (ISO-style metadata: Doc Owner, Doc Type, revision, author) and the ISO certificate library (QMS/EMS/OH&S), with direct-to-file links rather than a built-in viewer.
 - **Cross-project search** — a global search across the user's accessible projects.
-- **Mail Approvals** — routed nav entry, not yet implemented (shown as an honest "not yet implemented" empty state rather than a broken page).
 
 ## Audit trail
 
-Meaningful actions are logged to `AuditLog` (action, entity, user, project, timestamp, metadata), including: login/logout, document upload/registration/metadata changes/deletion/revision creation, temporary file upload/registration/deletion, mail send/draft save/status changes, incoming mail registration, guest contact creation, and document/temporary-file open/download.
+Meaningful actions are logged to `AuditLog` (action, entity, user, project, timestamp, metadata) across every module above — logins, uploads, registrations, status transitions, deletions, and sends.
 
-## Known limitations
+## Relationship to Oracle Aconex
 
-- No automated test suite is committed (development relied on ad-hoc Playwright scripts run against a live dev server, plus TypeScript/ESLint/production-build checks).
-- Mail Approvals is a routed stub.
-- Overdue mail status is computed at read time (from `responseDueDate`), not persisted by a scheduled job — there is no background/cron infrastructure in this project.
+This system is **not** integrated with Oracle Aconex today. The intended future architecture, once a real integration is commissioned, is:
+
+```
+Oracle Aconex
+     ↓
+Approved API / Integration Layer
+     ↓
+Shanfari Backend
+     ↓
+Shanfari PostgreSQL + Private Storage
+     ↓
+Shanfari IMS
+```
+
+Nothing in this codebase currently implements the "Approved API / Integration Layer" step — this system runs entirely on its own database and local storage, as described above.
+
+## Further documentation
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how the modules fit together
+- [docs/SECURITY.md](docs/SECURITY.md) — auth, RBAC, storage hardening, headers, and known residual risk
+- [docs/TESTING.md](docs/TESTING.md) — what's unit-tested, what's manually/E2E-verified, what's deferred
+- [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) — the full history of QA passes run against this codebase
+- [docs/DATA_MODEL.md](docs/DATA_MODEL.md) — the Prisma schema, module by module
+- [docs/API.md](docs/API.md) — the route-handler API surface and its conventions
+- [docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md), [docs/PRODUCTION_DATABASE.md](docs/PRODUCTION_DATABASE.md), [docs/BACKUP_AND_RESTORE.md](docs/BACKUP_AND_RESTORE.md), [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) — what it would take to run this for real, and what's still missing
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — local dev workflow and conventions
+- [docs/QA_REPORT.md](docs/QA_REPORT.md), [docs/ENGINEERING_SCORECARD.md](docs/ENGINEERING_SCORECARD.md) — honest, evidence-based self-assessment
+- [docs/CHANGELOG.md](docs/CHANGELOG.md) — notable changes
+
+## Current Production Limitations
+
+This distinguishes **production architecture readiness** (the code is written, tested, and would work against real infrastructure) from **actual production infrastructure deployment** (nothing below has ever been deployed outside this development environment):
+
+| Area | Status |
+|---|---|
+| Database | Architecture-ready (migrations, indexes, constraints, transactions all reviewed — see [docs/PRODUCTION_DATABASE.md](docs/PRODUCTION_DATABASE.md)). **Not deployed**: no managed Postgres instance, no automated backups, single Docker container only. |
+| File storage | Architecture-ready (driver abstraction, S3-compatible driver code-complete and unit-tested against a mocked client — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)). **Not deployed**: never run against a real bucket; local disk is what's actually used today. |
+| File integrity | Checksums exist for Management System documents/certificates only — not yet for Documents/Mail/HSE/Field attachments. See [docs/SECURITY.md](docs/SECURITY.md). |
+| Backup/restore | Procedure drilled and verified end-to-end against disposable databases (see [docs/BACKUP_AND_RESTORE.md](docs/BACKUP_AND_RESTORE.md)). **Not deployed**: no automated/scheduled backup job exists. |
+| Testing | Real, CI-enforced unit (135 tests) and E2E (32 tests) suites — see [docs/TESTING.md](docs/TESTING.md). Scoped to the highest-value logic and journeys, not exhaustive. |
+| CI/CD | Two real GitHub Actions workflows (unit/build/audit; E2E against a disposable Postgres service container) — both dry-run-verified before being trusted. No dedicated "security" CI job beyond `npm audit` + the auth/RBAC/storage unit tests; broader security verification (Phase 1) was a manual pass, not yet automated. |
+| CSP | `'unsafe-inline'` kept deliberately — investigated via Next.js's own docs, not just deferred; conflicts with this app's statically-generated marketing pages. See [docs/SECURITY.md](docs/SECURITY.md). |
+| Observability | Structured logging with sensitive-data redaction exists and is wired into auth/health-check failures. **Not deployed**: no metrics, tracing, log aggregation, or alerting platform. See [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md). |
+| `npm audit` | 0 critical, 8 high, 2 moderate — every finding individually investigated; none has a safe fix available upstream yet. See [docs/SECURITY.md](docs/SECURITY.md). |
+| Scheduled jobs | Overdue mail/field/HSE statuses are computed at read time; there is no cron/queue infrastructure in this project. |
+
+See [docs/ENGINEERING_SCORECARD.md](docs/ENGINEERING_SCORECARD.md) for the evidence behind each score, and [docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md) for a reference (non-deployed) example of what standing this up for real would look like.

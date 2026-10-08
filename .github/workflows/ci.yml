@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# This repository is intentionally public (reviewers need access) — this
+# workflow never touches the real/production database. It only ever talks to
+# a disposable Postgres service container that is created fresh for this job
+# and destroyed when it ends.
+env:
+  DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci_shanfari_edms?schema=public"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci_shanfari_edms
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci_shanfari_edms"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: Apply migrations to the disposable CI database
+        run: npx prisma migrate deploy
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npx eslint .
+
+      - name: Unit tests (Vitest, with coverage thresholds enforced)
+        run: npx vitest run --coverage
+
+      - name: Production build
+        run: npm run build
+
+      - name: npm audit (fails only on new CRITICAL advisories)
+        run: npm audit --audit-level=critical
+
+# Deliberately NOT included here (see docs/TESTING.md for the full picture
+# and rationale):
+#   - Playwright E2E — the Phase 1/Phase 2 QA passes for this project were
+#     run as disposable, hand-driven scripts against an isolated database,
+#     not a committed Playwright suite. Automating that suite in CI is
+#     tracked as follow-up work, not silently faked here.
+#   - npm audit as a hard gate on HIGH/MODERATE severity — several current
+#     advisories have no safe upstream fix yet (see docs/SECURITY.md:
+#     prisma/@prisma/config/deepmerge-ts, the eslint-config-next toolchain's
+#     braces/micromatch/fast-glob, and exceljs's pinned uuid). Gating on
+#     those would just train everyone to ignore red CI. The audit step here
+#     only fails on a genuinely new CRITICAL advisory.
